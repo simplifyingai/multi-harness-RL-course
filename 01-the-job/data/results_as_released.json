@@ -1,0 +1,18 @@
+{
+  "title": "LFM2.5-2.6B as released, 24 held-out tasks per program (this project)",
+  "harnesses": [
+    {"name": "mini-swe-agent", "solved": 24, "tasks": 24},
+    {"name": "Claude Code", "solved": 15, "tasks": 24},
+    {"name": "Pi", "solved": 4, "tasks": 24}
+  ],
+  "note": "Same weights in all three; only the program around the model changed.\nPi was re-run after a sandbox fix (see chapter 19).",
+  "source": "multi-harness-rl runs/main/summary_base.json and summary_base-pi-fixed.json, 2026-10-06",
+  "article": {
+    "label": "From the article (their tasks, their machines)",
+    "lines": [
+      "The same LFM2.5-2.6B weights solved 62% of tasks under",
+      "Mini-SWE-Agent, but only 33% under Claude Code.",
+      "huggingface.co/spaces/FineEnvs/multi-harness-rl"
+    ]
+  }
+}

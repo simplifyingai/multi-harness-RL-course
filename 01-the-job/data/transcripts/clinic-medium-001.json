@@ -1,0 +1,122 @@
+{
+  "task_id": "clinic-medium-001",
+  "question": "Which specialty has the most doctors?",
+  "expected": "General Practice",
+  "model": "LFM2.5-2.6B, 4-bit, as released (no training)",
+  "recorded": "2026-10-06, greedy decoding, 8-call budget",
+  "runs": [
+    {
+      "harness": "mini-swe-agent",
+      "version": "2.4.6",
+      "raw": "clinic-medium-001.mini-swe-agent.txt",
+      "events": [
+        {
+          "kind": "rejected",
+          "message": "Unknown tool 'sqlite3'.Missing 'command' argument in bash tool call."
+        },
+        {
+          "kind": "command",
+          "command": "sqlite3 data.db \".tables\"",
+          "output": "appointments  doctors       patients"
+        },
+        {
+          "kind": "command",
+          "command": "sqlite3 data.db \".schema doctors\"",
+          "output": "CREATE TABLE doctors (id INTEGER PRIMARY KEY, name TEXT NOT NULL, specialty TEXT NOT NULL);"
+        },
+        {
+          "kind": "command",
+          "command": "sqlite3 data.db \"SELECT specialty, COUNT(*) as count FROM doctors GROUP BY specialty ORDER BY count DESC;\"",
+          "output": "General Practice|7\nPediatrics|5\nOrthopedics|4\nPsychiatry|3\nOphthalmology|3\nDermatology|3\nCardiology|3\nNeurology|2"
+        },
+        {
+          "kind": "command",
+          "command": "echo \"General Practice\" > answer.txt",
+          "output": ""
+        },
+        {
+          "kind": "command",
+          "command": "cat answer.txt",
+          "output": "General Practice"
+        },
+        {
+          "kind": "rejected",
+          "message": "No tool calls found in the response. Every response MUST include at least one tool call."
+        },
+        {
+          "kind": "command",
+          "command": "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT",
+          "output": ""
+        }
+      ],
+      "answer_file": "General Practice",
+      "key": "mini-swe-agent"
+    },
+    {
+      "harness": "Claude Code",
+      "version": "2.1.290",
+      "raw": "clinic-medium-001.claude-code.jsonl",
+      "events": [
+        {
+          "kind": "rejected",
+          "tool": "bash",
+          "input": {
+            "command": "ls -la data.db"
+          },
+          "message": "Error: No such tool available: bash. Tool names are case-sensitive: call Bash instead."
+        },
+        {
+          "kind": "harness",
+          "message": "Output token limit hit. Resume directly — no apology, no recap of what you were doing. Pick up mid-thought if that is where the cut happened. Break remaining work into smaller pieces."
+        },
+        {
+          "kind": "command",
+          "tool": "Bash",
+          "command": "ls -la data.db",
+          "output": "-rw-r--r--@ 1 user  staff  36864 Oct  6 07:01 data.db"
+        },
+        {
+          "kind": "rejected",
+          "tool": "bash",
+          "input": {
+            "command": "sqlite3 data.db \".tables\""
+          },
+          "message": "Error: No such tool available: bash. Tool names are case-sensitive: call Bash instead."
+        },
+        {
+          "kind": "command",
+          "tool": "Bash",
+          "command": "sqlite3 data.db \".tables\"",
+          "output": "appointments  doctors       patients"
+        },
+        {
+          "kind": "command",
+          "tool": "Bash",
+          "command": "sqlite3 data.db \"SELECT * FROM doctors;\"",
+          "output": "1|Leo Larsen|Dermatology\n2|Tomas Weber|General Practice\n3|Abigail Keller|General Practice\n4|Dario Eriksen|General Practice\n5|Nadia Schultz|Pediatrics\n6|Priya Sato|Neurology\n7|Sofia Tanaka|General Practice\n8|Daniel Ortiz|Dermatology\n9|Andre Fischer|Ophthalmology\n10|Rafael Bauer|Pediatrics\n11|Nico Wong|Orthopedics\n12|Adrian Lindqvist|General Practice\n13|Nina Yilmaz|Psychiatry\n14|Rafael Eriksen|Pediatrics\n15|Paula Novak|Orthopedics\n16|Felix Herrera|Neurology\n17|Bruno Hansen|Psychiatry\n18|Grace Torres|Cardiology\n19|Maya Santos|Pediatrics\n20|Ingrid Duarte|Pediatrics\n21|Ravi Chen|Dermatology\n22|Wei Nguyen|Psychiatry\n23|Bianca Kim|Orthopedics\n24|Yusuf Hartmann|Ophthalmology\n25|Bruno Marino|Ophthalmology\n26|Ben Ricci|General Practice\n27|Farah Bauer|General Practice\n28|Olga Vidal|Cardiology\n29|Stefan Russo|Cardiology\n30|Nora Lehmann|Orthopedics"
+        },
+        {
+          "kind": "command",
+          "tool": "Bash",
+          "command": "sqlite3 data.db \"SELECT specialty, COUNT(*) as count FROM doctors GROUP BY specialty ORDER BY count DESC;\"",
+          "output": "General Practice|7\nPediatrics|5\nOrthopedics|4\nPsychiatry|3\nOphthalmology|3\nDermatology|3\nCardiology|3\nNeurology|2"
+        },
+        {
+          "kind": "rejected",
+          "tool": "write",
+          "input": {
+            "file": "<task folder>/answer.txt",
+            "content": "General Practice"
+          },
+          "message": "Error: No such tool available: write"
+        },
+        {
+          "kind": "harness",
+          "message": "Step budget exhausted; stopping."
+        }
+      ],
+      "answer_file": null,
+      "key": "claude-code"
+    }
+  ]
+}
