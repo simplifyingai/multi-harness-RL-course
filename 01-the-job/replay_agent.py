@@ -28,7 +28,7 @@ RESULTS = DATA_DIR / "results_as_released.json"
 RUN_KEYS = ("mini-swe-agent", "claude-code")
 SCORES = "scores"
 PAUSE_S = 0.8
-MAX_OUTPUT_LINES = 4
+MAX_OUTPUT_LINES = 3
 NUMBER_WIDTH = 4
 KIND_WIDTH = 10
 INDENT = " " * (NUMBER_WIDTH + KIND_WIDTH)
@@ -41,8 +41,7 @@ REPLY_KINDS = {"command", "rejected"}
 # Plain words for the program's own messages (the raw text is in data/).
 GLOSSES = {
     "Output token limit hit": (
-        "[the reply ran past the 1,024-token cap and was cut off; "
-        "Claude Code asked the model to carry on]"
+        "[a reply hit the 1,024-token cap; Claude Code asked it to go on]"
     ),
     "Step budget exhausted": "[the 8-call budget is used up, so the run ends]",
 }
