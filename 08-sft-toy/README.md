@@ -1115,5 +1115,5 @@ success is possible, and RL then improves on the teacher by its own results.
 - **SFT vs RL**: SFT copies a teacher's moves and cannot value what they cost;
   RL learns from its own attempts and from whatever the reward pays for.
 
-Next: [chapter 9](../README.md#chapters), From four choices to 128,000: tokens
-and chat templates.
+Next: [chapter 9](../09-tokens-and-templates/), From four choices to 128,000:
+tokens and chat templates.

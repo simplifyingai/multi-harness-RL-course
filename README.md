@@ -55,7 +55,7 @@ About 258 minutes of video in 29 chapters.
 
 | # | chapter | minutes | status |
 | ---: | --- | ---: | --- |
-| 9 | From four choices to 128,000: tokens and chat templates | 7 | coming |
+| 9 | [From four choices to 128,000: tokens and chat templates](09-tokens-and-templates/) | 7 | ready |
 | 10 | Meet LFM2.5-2.6B | 10 | coming |
 | 11 | Quantize it yourself: 16 bits to 4 | 11 | coming |
 | 12 | How the model picks each token | 8 | coming |
