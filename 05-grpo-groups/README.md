@@ -623,5 +623,5 @@ of 8.
 - **metrics.jsonl**: the run's record, one JSON line per step, enough to redraw
   every curve.
 
-Next: [chapter 6](../README.md#chapters), GRPO, part 2: the importance ratio and
+Next: [chapter 6](../06-ratio-and-clip/), GRPO, part 2: the importance ratio and
 the clip.
