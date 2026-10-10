@@ -527,5 +527,4 @@ checks that reusing the results gives exactly the same run as fresh folders.
   gradient. The course uses it again to train LFM2.5-2.6B.
 - **Seed**: the number that starts the random choices; same seed, same run.
 
-Next: [chapter 4](../README.md#chapters), several calls, one reward: a tiny
-agent.
+Next: [chapter 4](../04-episodes/), several calls, one reward: a tiny agent.
