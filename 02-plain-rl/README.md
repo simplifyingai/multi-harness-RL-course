@@ -417,4 +417,4 @@ md5   0a81c713b16a92136c648ba40603bbbc
   Here each question is a row of four arms, and a toy this small lets you watch
   the learning alone, before any language model or harness.
 
-Next: [chapter 3](../README.md#chapters), where the nudge comes from.
+Next: [chapter 3](../03-policy-gradient/), where the nudge comes from.

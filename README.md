@@ -39,7 +39,7 @@ About 258 minutes of video in 29 chapters.
 | ---: | --- | ---: | --- |
 | 1 | [The job, the grader and the puzzle](01-the-job/) | 8 | ready |
 | 2 | [Plain RL: learning which query to trust](02-plain-rl/) | 8 | ready |
-| 3 | Policy gradient: the math behind 'do more of what worked' | 9 | coming |
+| 3 | [Policy gradient: the math behind 'do more of what worked'](03-policy-gradient/) | 9 | ready |
 | 4 | Several calls, one reward: a tiny agent | 7 | coming |
 
 ### Part 2. The project's algorithms, still on the toy
