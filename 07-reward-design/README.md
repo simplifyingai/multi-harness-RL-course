@@ -930,4 +930,4 @@ about 5.
 - **Infrastructure failure**: a rollout lost to the sandbox, not to the
   agent; scored 0 or left unscored.
 
-Next: [chapter 8](../README.md#chapters), Imitation (SFT) on the toy.
+Next: [chapter 8](../08-sft-toy/), Imitation (SFT) on the toy.
