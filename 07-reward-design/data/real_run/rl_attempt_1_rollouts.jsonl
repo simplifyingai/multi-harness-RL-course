@@ -1,0 +1,64 @@
+{"step": 1, "harness": "mini-swe-agent", "correct": true, "n_calls": 4, "reward": 1.0666666666666667, "first_sequence_sampled": 159, "reply_tokens": [26, 45, 49, 39]}
+{"step": 1, "harness": "mini-swe-agent", "correct": true, "n_calls": 4, "reward": 1.0666666666666667, "first_sequence_sampled": 178, "reply_tokens": [27, 43, 55, 53]}
+{"step": 1, "harness": "mini-swe-agent", "correct": true, "n_calls": 4, "reward": 1.0666666666666667, "first_sequence_sampled": 156, "reply_tokens": [28, 57, 37, 34]}
+{"step": 1, "harness": "mini-swe-agent", "correct": false, "n_calls": 5, "reward": 0.0, "first_sequence_sampled": 224, "reply_tokens": [28, 42, 40, 58, 56]}
+{"step": 1, "harness": "claude-code", "correct": false, "n_calls": 7, "reward": 0.0, "first_sequence_sampled": 363, "reply_tokens": [28, 34, 59, 120, 48, 44, 30]}
+{"step": 1, "harness": "claude-code", "correct": false, "n_calls": 7, "reward": 0.0, "first_sequence_sampled": 339, "reply_tokens": [28, 71, 67, 46, 61, 66, 99]}
+{"step": 1, "harness": "claude-code", "correct": false, "n_calls": 8, "reward": 0.0, "first_sequence_sampled": 490, "reply_tokens": [30, 69, 79, 78, 39, 85, 78, 32]}
+{"step": 1, "harness": "claude-code", "correct": false, "n_calls": 8, "reward": 0.0, "first_sequence_sampled": 334, "reply_tokens": [28, 37, 105, 47, 44, 32, 41, 36]}
+{"step": 2, "harness": "mini-swe-agent", "correct": true, "n_calls": 4, "reward": 1.0666666666666667, "first_sequence_sampled": 148, "reply_tokens": [28, 44, 36, 40]}
+{"step": 2, "harness": "mini-swe-agent", "correct": false, "n_calls": 4, "reward": 0.0, "first_sequence_sampled": 137, "reply_tokens": [28, 37, 33, 39]}
+{"step": 2, "harness": "mini-swe-agent", "correct": false, "n_calls": 6, "reward": 0.0, "first_sequence_sampled": 246, "reply_tokens": [27, 43, 33, 44, 53, 46]}
+{"step": 2, "harness": "mini-swe-agent", "correct": false, "n_calls": 8, "reward": 0.0, "first_sequence_sampled": 314, "reply_tokens": [18, 24, 54, 42, 34, 56, 33, 53]}
+{"step": 2, "harness": "claude-code", "correct": true, "n_calls": 5, "reward": 1.05, "first_sequence_sampled": 195, "reply_tokens": [28, 66, 37, 35, 29]}
+{"step": 2, "harness": "claude-code", "correct": false, "n_calls": 7, "reward": 0.0, "first_sequence_sampled": 328, "reply_tokens": [28, 52, 57, 50, 69, 37, 35]}
+{"step": 2, "harness": "claude-code", "correct": false, "n_calls": 4, "reward": 0.0, "first_sequence_sampled": 132, "reply_tokens": [30, 46, 37, 19]}
+{"step": 2, "harness": "claude-code", "correct": true, "n_calls": 6, "reward": 1.0333333333333334, "first_sequence_sampled": 221, "reply_tokens": [31, 26, 66, 37, 42, 19]}
+{"step": 3, "harness": "mini-swe-agent", "correct": false, "n_calls": 8, "reward": 0.0, "first_sequence_sampled": 448, "reply_tokens": [26, 35, 75, 74, 43, 75, 45, 75]}
+{"step": 3, "harness": "mini-swe-agent", "correct": true, "n_calls": 7, "reward": 1.0166666666666666, "first_sequence_sampled": 409, "reply_tokens": [29, 74, 115, 35, 74, 35, 47]}
+{"step": 3, "harness": "mini-swe-agent", "correct": false, "n_calls": 8, "reward": 0.0, "first_sequence_sampled": 414, "reply_tokens": [32, 78, 71, 43, 87, 31, 33, 39]}
+{"step": 3, "harness": "mini-swe-agent", "correct": false, "n_calls": 8, "reward": 0.0, "first_sequence_sampled": 417, "reply_tokens": [38, 70, 68, 34, 68, 52, 26, 61]}
+{"step": 3, "harness": "claude-code", "correct": true, "n_calls": 7, "reward": 1.0166666666666666, "first_sequence_sampled": 187, "reply_tokens": [39, 56, 31, 35, 23, 3, 17]}
+{"step": 3, "harness": "claude-code", "correct": true, "n_calls": 6, "reward": 1.0333333333333334, "first_sequence_sampled": 161, "reply_tokens": [28, 39, 33, 22, 17]}
+{"step": 3, "harness": "claude-code", "correct": true, "n_calls": 5, "reward": 1.05, "first_sequence_sampled": 140, "reply_tokens": [28, 39, 33, 32, 8]}
+{"step": 3, "harness": "claude-code", "correct": true, "n_calls": 5, "reward": 1.05, "first_sequence_sampled": 111, "reply_tokens": [28, 39, 33, 11, 18]}
+{"step": 4, "harness": "mini-swe-agent", "correct": true, "n_calls": 7, "reward": 1.0166666666666666, "first_sequence_sampled": 327, "reply_tokens": [31, 52, 33, 58, 59, 40, 54]}
+{"step": 4, "harness": "mini-swe-agent", "correct": true, "n_calls": 5, "reward": 1.05, "first_sequence_sampled": 221, "reply_tokens": [26, 37, 64, 50, 44]}
+{"step": 4, "harness": "mini-swe-agent", "correct": true, "n_calls": 8, "reward": 1.0, "first_sequence_sampled": 362, "reply_tokens": [25, 51, 53, 39, 72, 49, 33, 40]}
+{"step": 4, "harness": "mini-swe-agent", "correct": true, "n_calls": 4, "reward": 1.0666666666666667, "first_sequence_sampled": 197, "reply_tokens": [37, 63, 41, 56]}
+{"step": 4, "harness": "claude-code", "correct": false, "n_calls": 3, "reward": 0.0, "first_sequence_sampled": 117, "reply_tokens": [26, 69, 22]}
+{"step": 4, "harness": "claude-code", "correct": false, "n_calls": 1, "reward": 0.0, "first_sequence_sampled": 144, "reply_tokens": [144]}
+{"step": 4, "harness": "claude-code", "correct": false, "n_calls": 7, "reward": 0.0, "first_sequence_sampled": 299, "reply_tokens": [26, 54, 60, 38, 58, 33, 30]}
+{"step": 4, "harness": "claude-code", "correct": false, "n_calls": 2, "reward": 0.0, "first_sequence_sampled": 84, "reply_tokens": [27, 57]}
+{"step": 5, "harness": "mini-swe-agent", "correct": false, "n_calls": 3, "reward": 0.0, "first_sequence_sampled": 168, "reply_tokens": [72, 43, 53]}
+{"step": 5, "harness": "mini-swe-agent", "correct": true, "n_calls": 5, "reward": 1.05, "first_sequence_sampled": 275, "reply_tokens": [27, 82, 76, 33, 57]}
+{"step": 5, "harness": "mini-swe-agent", "correct": false, "n_calls": 7, "reward": 0.0, "first_sequence_sampled": 84, "reply_tokens": [84, 29, 63, 114, 140, 47, 51]}
+{"step": 5, "harness": "mini-swe-agent", "correct": true, "n_calls": 5, "reward": 1.05, "first_sequence_sampled": 247, "reply_tokens": [24, 71, 78, 33, 41]}
+{"step": 5, "harness": "claude-code", "correct": false, "n_calls": 1, "reward": 0.0, "first_sequence_sampled": 222, "reply_tokens": [222]}
+{"step": 5, "harness": "claude-code", "correct": false, "n_calls": 1, "reward": 0.0, "first_sequence_sampled": 184, "reply_tokens": [184]}
+{"step": 5, "harness": "claude-code", "correct": false, "n_calls": 1, "reward": 0.0, "first_sequence_sampled": 232, "reply_tokens": [232]}
+{"step": 5, "harness": "claude-code", "correct": false, "n_calls": 1, "reward": 0.0, "first_sequence_sampled": 202, "reply_tokens": [202]}
+{"step": 6, "harness": "mini-swe-agent", "correct": false, "n_calls": 8, "reward": 0.0, "first_sequence_sampled": 227, "reply_tokens": [227, 97, 39, 79, 84, 59, 88, 72]}
+{"step": 6, "harness": "mini-swe-agent", "correct": true, "n_calls": 6, "reward": 1.0333333333333334, "first_sequence_sampled": 313, "reply_tokens": [39, 43, 155, 51, 25, 297]}
+{"step": 6, "harness": "mini-swe-agent", "correct": false, "n_calls": 4, "reward": 0.0, "first_sequence_sampled": 454, "reply_tokens": [249, 48, 102, 55]}
+{"step": 6, "harness": "mini-swe-agent", "correct": true, "n_calls": 4, "reward": 1.0666666666666667, "first_sequence_sampled": 292, "reply_tokens": [39, 179, 33, 41]}
+{"step": 6, "harness": "claude-code", "correct": false, "n_calls": 1, "reward": 0.0, "first_sequence_sampled": 168, "reply_tokens": [168]}
+{"step": 6, "harness": "claude-code", "correct": false, "n_calls": 1, "reward": 0.0, "first_sequence_sampled": 140, "reply_tokens": [140]}
+{"step": 6, "harness": "claude-code", "correct": false, "n_calls": 7, "reward": 0.0, "first_sequence_sampled": 1108, "reply_tokens": [379, 99, 77, 129, 249, 105, 70]}
+{"step": 6, "harness": "claude-code", "correct": false, "n_calls": 2, "reward": 0.0, "first_sequence_sampled": 217, "reply_tokens": [198, 19]}
+{"step": 7, "harness": "mini-swe-agent", "correct": false, "n_calls": 5, "reward": 0.0, "first_sequence_sampled": 1024, "reply_tokens": [1024, 99, 821, 682, 204]}
+{"step": 7, "harness": "mini-swe-agent", "correct": false, "n_calls": 3, "reward": 0.0, "first_sequence_sampled": 67, "reply_tokens": [67, 237, 121]}
+{"step": 7, "harness": "mini-swe-agent", "correct": true, "n_calls": 6, "reward": 1.0333333333333334, "first_sequence_sampled": 1024, "reply_tokens": [1024, 189, 546, 595, 90, 62]}
+{"step": 7, "harness": "mini-swe-agent", "correct": false, "n_calls": 3, "reward": 0.0, "first_sequence_sampled": 133, "reply_tokens": [133, 112, 90]}
+{"step": 7, "harness": "claude-code", "correct": false, "n_calls": 3, "reward": 0.0, "first_sequence_sampled": 730, "reply_tokens": [358, 128, 244]}
+{"step": 7, "harness": "claude-code", "correct": false, "n_calls": 2, "reward": 0.0, "first_sequence_sampled": 1194, "reply_tokens": [1024, 170]}
+{"step": 7, "harness": "claude-code", "correct": false, "n_calls": 4, "reward": 0.0, "first_sequence_sampled": 4096, "reply_tokens": [1024, 1024, 1024]}
+{"step": 7, "harness": "claude-code", "correct": false, "n_calls": 1, "reward": 0.0, "first_sequence_sampled": 616, "reply_tokens": [616]}
+{"step": 8, "harness": "mini-swe-agent", "correct": false, "n_calls": 3, "reward": 0.0, "first_sequence_sampled": 1024, "reply_tokens": [1024, 103, 326]}
+{"step": 8, "harness": "mini-swe-agent", "correct": true, "n_calls": 5, "reward": 1.05, "first_sequence_sampled": 1121, "reply_tokens": [44, 788, 33, 194, 62]}
+{"step": 8, "harness": "mini-swe-agent", "correct": false, "n_calls": 3, "reward": 0.0, "first_sequence_sampled": 296, "reply_tokens": [296, 1024, 303]}
+{"step": 8, "harness": "mini-swe-agent", "correct": false, "n_calls": 3, "reward": 0.0, "first_sequence_sampled": 99, "reply_tokens": [99, 976, 434]}
+{"step": 8, "harness": "claude-code", "correct": false, "n_calls": 4, "reward": 0.0, "first_sequence_sampled": 4096, "reply_tokens": [1024, 1024, 1024, 1024]}
+{"step": 8, "harness": "claude-code", "correct": false, "n_calls": 4, "reward": 0.0, "first_sequence_sampled": 1024, "reply_tokens": [1024, 1024, 1024, 1024]}
+{"step": 8, "harness": "claude-code", "correct": false, "n_calls": 3, "reward": 0.0, "first_sequence_sampled": 1217, "reply_tokens": [193, 1024, 535]}
+{"step": 8, "harness": "claude-code", "correct": false, "n_calls": 5, "reward": 0.0, "first_sequence_sampled": 4228, "reply_tokens": [132, 1024, 1024, 1024, 1024]}

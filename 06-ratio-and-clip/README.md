@@ -856,4 +856,4 @@ from the learner's, and only they let the clip limit it.
   weights instead of keeping the sampler's, so the ratio reads 1.000 whatever
   the gap.
 
-Next: [chapter 7](../README.md#chapters), Rewards that backfire.
+Next: [chapter 7](../07-reward-design/), Rewards that backfire.

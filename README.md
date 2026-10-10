@@ -48,7 +48,7 @@ About 258 minutes of video in 29 chapters.
 | ---: | --- | ---: | --- |
 | 5 | [GRPO, part 1: compare attempts within a group](05-grpo-groups/) | 8 | ready |
 | 6 | [GRPO, part 2: the importance ratio and the clip](06-ratio-and-clip/) | 9 | ready |
-| 7 | Rewards that backfire | 8 | coming |
+| 7 | [Rewards that backfire](07-reward-design/) | 8 | ready |
 | 8 | Imitation (SFT) on the toy | 8 | coming |
 
 ### Part 3. The model on your laptop
