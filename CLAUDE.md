@@ -38,7 +38,7 @@ video tool and the written lessons live on simplifyingai.com.
 ```text
 NN-slug/            one chapter: README.md, scripts, data/
 tests/              pytest, one file per chapter
-pyproject.toml      dev tools only (ruff, pytest, pre-commit); no runtime deps
+pyproject.toml      dev tools and test imports (ruff, pytest, pre-commit, numpy); no runtime deps
 ```
 
 ## Quality gates

@@ -85,5 +85,4 @@ reward 0.
 - **As released**: the model exactly as its makers published it, before we
   train it.
 
-Next: [chapter 2](../README.md#chapters), plain RL on a toy version of this
-job.
+Next: [chapter 2](../02-plain-rl/), plain RL on a toy version of this job.
