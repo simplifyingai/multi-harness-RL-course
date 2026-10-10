@@ -107,8 +107,8 @@ def main() -> None:
         + "".join(f"{ratio_range(runs[name]):<{RUN_WIDTH}}" for name in names).rstrip()
     )
     print()
-    print("the engine that sampled them scored tokens in 16-bit numbers (bf16) in")
-    print("attempt 1 and in 32-bit numbers (float32) in attempt 2")
+    print("the engine that sampled them computed token probabilities in 16-bit")
+    print("numbers (bf16) in attempt 1 and in 32-bit numbers (float32) in attempt 2")
     print("from: the project's runs/main/grpo_attempt1/metrics.jsonl and")
     print("runs/main/grpo/metrics.jsonl, copied into data/real_runs/")
 

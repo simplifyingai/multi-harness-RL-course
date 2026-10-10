@@ -757,8 +757,8 @@ step  attempt 1    attempt 2
    8  0.999
 range 0.995-1.000  0.999-1.001
 
-the engine that sampled them scored tokens in 16-bit numbers (bf16) in
-attempt 1 and in 32-bit numbers (float32) in attempt 2
+the engine that sampled them computed token probabilities in 16-bit
+numbers (bf16) in attempt 1 and in 32-bit numbers (float32) in attempt 2
 from: the project's runs/main/grpo_attempt1/metrics.jsonl and
 runs/main/grpo/metrics.jsonl, copied into data/real_runs/
 ```
@@ -770,13 +770,14 @@ recorded probabilities and the trainer's should be 1, and it nearly is:
 0.995 to 1.000 in attempt 1 and 0.999 to 1.001 in attempt 2 (the project's
 `runs/main/grpo_attempt1/metrics.jsonl` and `runs/main/grpo/metrics.jsonl`,
 field `importance_ratio_mean`; its README reports 0.995 to 1.000, and 1.000
-once the engine scored in 32-bit numbers). With means this close to 1, the
+once the engine computed in 32-bit numbers). With means this close to 1, the
 update is close to REINFORCE with a group baseline, as in the default run. (The
 project did not log a share clipped, only the mean.)
 
 It is not exactly 1, because the engine and the trainer are different programs.
-In attempt 1 the engine scored tokens in 16-bit numbers, and the ratio sat just
-below 1; in attempt 2 it scored in 32-bit numbers, and the ratio centred on 1.
+In attempt 1 the engine computed token probabilities in 16-bit numbers, and the
+ratio sat just below 1; in attempt 2 it computed them in 32-bit numbers, and the
+ratio centred on 1.
 The recorded probabilities are what showed that gap. Had the trainer recomputed
 "old" with its own weights, both runs would have read exactly 1.000, gap or no
 gap. A mean is weak evidence on its own (the stale run above also averaged
