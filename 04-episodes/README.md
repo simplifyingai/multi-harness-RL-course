@@ -485,5 +485,4 @@ md5   1487491cf6474fec5ea8bba137dc818e
 - **Memorisation**: doing well only on questions already seen, by remembering
   their answers.
 
-Next: [chapter 5](../README.md#chapters), GRPO, part 1: compare attempts within
-a group.
+Next: [chapter 5](../05-grpo-groups/), GRPO, part 1: compare attempts within a group.
