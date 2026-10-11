@@ -488,34 +488,45 @@ def print_reason_style(
 
 
 def print_fresh(
-    pairs: int, trainable: int, zeros: tuple[int, int], difference: float, shape: tuple
+    pairs: int,
+    numbers: int,
+    zeros: tuple[int, int],
+    difference: float,
+    shape: tuple[int, int],
+    seed: int,
 ) -> None:
     """Show that the fresh adapter changes nothing, before any training.
 
     Args:
         pairs: How many adapter pairs were added.
-        trainable: How many numbers they hold.
+        numbers: How many trainable numbers they hold.
         zeros: All-zero B matrices, and how many B matrices there are.
         difference: Max logit difference against the model before LoRA.
         shape: The scores' shape (positions, vocabulary).
+        seed: The seed ``apply_lora`` sets before making the A matrices.
     """
     heading(
         f"a fresh adapter built the chapter-13 way: rank {LORA_RANK}, scale "
-        f"{LORA_SCALE}, the last {LORA_LAYERS} layers, seed 0"
+        f"{LORA_SCALE}, the last {LORA_LAYERS} layers, seed {seed}"
     )
     zero, count = zeros
     print(
         wrapped(
-            f"{pairs} adapter pairs, {trainable:,} trainable numbers; B: {zero} of "
+            f"{pairs} adapter pairs, {numbers:,} trainable numbers; B: {zero} of "
             f"{count} matrices all zeros"
         )
     )
     positions, vocabulary = shape
+    verdict = (
+        "the adapter starts as a no-op"
+        if difference == 0 and zero == count
+        else "NOT a no-op: this adapter changes the model before any training"
+    )
     print(
         wrapped(
             f"max |logit difference| from the model before LoRA, over row 1's "
             f"{positions} positions x {vocabulary:,} scores: {difference}; checked "
-            "before training: the adapter starts as a no-op"
+            f"before training: {verdict}"
         )
     )
 

@@ -540,3 +540,16 @@ def test_train_sft_with_the_fixed_reason_trains_its_own_rows(
     assert (home / "sft_reasonfixed_limit8.safetensors").is_file()
     shown = plain(run_main(make_rows, "--reason", "fixed", "--show", "2"))
     assert "one fixed sentence for every row" in shown and "4. row 2" in shown
+
+
+def test_train_sft_stops_before_training_if_a_project_record_is_damaged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, course_home: Path
+) -> None:
+    """A broken bundled metrics file stops the script before any step is taken."""
+    use_tiny(monkeypatch, tmp_path)
+    broken = tmp_path / "broken.jsonl"
+    broken.write_text("{not json\n")
+    monkeypatch.setattr(train_sft, "MAIN_FILE", broken)
+    with pytest.raises(SystemExit, match="not a step"):
+        run_main(train_sft, "--limit", "8")
+    assert not (course_home / "14-sft-real-model" / "sft_limit8.safetensors").exists()

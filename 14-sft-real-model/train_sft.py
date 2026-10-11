@@ -50,7 +50,14 @@ from lfm_files import (
     pick_model,
     rows_path,
 )
-from lora import B_SUFFIX, adapter_weights, apply_lora, save_adapter, zero_b_count
+from lora import (
+    B_SUFFIX,
+    LORA_SEED,
+    adapter_weights,
+    apply_lora,
+    save_adapter,
+    zero_b_count,
+)
 from mlx_lm.tokenizer_utils import TokenizerWrapper
 from project_run import DRY_FILE, MAIN_FILE, ProjectRunError, read_run
 from rows import (
@@ -150,9 +157,10 @@ def check_fresh_adapter(model: nn.Module, row: Row) -> None:
     after = all_logits(model, row.input_ids)
     weights = adapter_weights(model)
     pairs = sum(name.endswith(B_SUFFIX) for name in weights)  # one B per pair
-    trainable = sum(array.size for array in weights.values())
+    numbers = sum(array.size for array in weights.values())
     difference = max_difference(after, before)
-    report.print_fresh(pairs, trainable, zero_b_count(model), difference, after.shape)
+    zeros = zero_b_count(model)
+    report.print_fresh(pairs, numbers, zeros, difference, after.shape, LORA_SEED)
 
 
 def parse_args() -> argparse.Namespace:
@@ -197,6 +205,10 @@ def main() -> None:
     """
     args = parse_args()
     folder, which = pick_model(args.fast)
+    try:  # read the bundled records first: a damaged one stops before training
+        project_runs = read_run(MAIN_FILE), read_run(DRY_FILE)
+    except ProjectRunError as error:
+        raise SystemExit(f"{SCRIPT}: {error}") from error
     set_memory_limits()
     loaded = load_folder(folder)
     model, tokenizer = loaded.model, loaded.tokenizer
@@ -231,10 +243,7 @@ def main() -> None:
     report.print_epochs(done)
     save_adapter(model, adapter)
     report.print_saved(adapter, adapter.stat().st_size, metrics)
-    try:
-        report.print_project_runs(read_run(MAIN_FILE), read_run(DRY_FILE))
-    except ProjectRunError as error:
-        raise SystemExit(f"{SCRIPT}: {error}") from error
+    report.print_project_runs(*project_runs)
     mx.clear_cache()
 
 

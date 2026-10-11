@@ -659,3 +659,14 @@ def test_a_fixed_reason_run_gets_its_own_files(course_home: Path) -> None:
     lr, epochs = lfm_files.SFT_LEARNING_RATE, lfm_files.SFT_EPOCHS
     name = lfm_files.adapter_name(lr, epochs, None, "fixed")
     assert name == "sft_reasonfixed.safetensors"
+
+
+def test_a_fresh_adapter_that_changed_something_is_not_called_a_no_op(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """The no-op verdict follows the numbers: a difference or a non-zero B says NOT."""
+    report.print_fresh(66, 9_781_248, (66, 66), 0.0, (266, 128_000), 0)
+    assert "the adapter starts as a no-op" in " ".join(capsys.readouterr().out.split())
+    report.print_fresh(66, 9_781_248, (65, 66), 0.5, (266, 128_000), 0)
+    out = " ".join(capsys.readouterr().out.split())
+    assert "NOT a no-op" in out and "starts as a no-op" not in out
