@@ -812,4 +812,4 @@ weights, most of what it learned is lost.
   each step.
 - **QLoRA**: a frozen 4-bit model with full-precision adapters.
 
-Next: chapter 14, SFT on the real model.
+Next: [chapter 14](../14-sft-real-model/), SFT on the real model.

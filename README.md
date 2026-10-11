@@ -65,7 +65,7 @@ About 258 minutes of video in 29 chapters.
 | # | chapter | minutes | status |
 | ---: | --- | ---: | --- |
 | 13 | [LoRA: train a 0.4% add-on, not the whole model](13-lora/) | 8 | ready |
-| 14 | SFT on the real model | 8 | coming |
+| 14 | [SFT on the real model](14-sft-real-model/) | 8 | ready |
 | 15 | GRPO on the real model, and why exact tokens matter | 9 | coming |
 
 ### Part 5. Inside a harness
