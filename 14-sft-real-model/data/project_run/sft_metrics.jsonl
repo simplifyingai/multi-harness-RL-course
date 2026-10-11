@@ -1,0 +1,15 @@
+{"stage": "sft", "epoch": 0, "step": 1, "loss_per_token": 2.5511795934213874, "tokens": 1474, "seconds": 50.35, "peak_gb": 3.83}
+{"stage": "sft", "epoch": 0, "step": 2, "loss_per_token": 2.2818981860878744, "tokens": 1343, "seconds": 45.04, "peak_gb": 3.9}
+{"stage": "sft", "epoch": 0, "step": 3, "loss_per_token": 1.7714486871789192, "tokens": 1393, "seconds": 37.37, "peak_gb": 3.9}
+{"stage": "sft", "epoch": 0, "step": 4, "loss_per_token": 1.1501245782534537, "tokens": 1243, "seconds": 26.29, "peak_gb": 3.9}
+{"stage": "sft", "epoch": 0, "step": 5, "loss_per_token": 0.6642973595058795, "tokens": 1358, "seconds": 32.36, "peak_gb": 3.9}
+{"stage": "sft", "epoch": 0, "step": 6, "loss_per_token": 0.4459494741026213, "tokens": 1282, "seconds": 36.26, "peak_gb": 3.9}
+{"stage": "sft", "epoch": 0, "step": 7, "loss_per_token": 0.37439063670104034, "tokens": 1351, "seconds": 22.65, "peak_gb": 3.9}
+{"stage": "sft", "epoch": 0, "step": 8, "loss_per_token": 0.29971536379915054, "tokens": 1257, "seconds": 36.24, "peak_gb": 3.9}
+{"stage": "sft", "epoch": 0, "step": 9, "loss_per_token": 0.3141901305594834, "tokens": 1259, "seconds": 36.2, "peak_gb": 3.92}
+{"stage": "sft", "epoch": 0, "step": 10, "loss_per_token": 0.26599093345952063, "tokens": 1526, "seconds": 27.9, "peak_gb": 3.92}
+{"stage": "sft", "epoch": 0, "step": 11, "loss_per_token": 0.21165654537451528, "tokens": 1370, "seconds": 41.14, "peak_gb": 3.92}
+{"stage": "sft", "epoch": 0, "step": 12, "loss_per_token": 0.16647323161176428, "tokens": 1433, "seconds": 37.21, "peak_gb": 3.92}
+{"stage": "sft", "epoch": 0, "step": 13, "loss_per_token": 0.13413712078939655, "tokens": 1336, "seconds": 36.31, "peak_gb": 3.95}
+{"stage": "sft", "epoch": 0, "step": 14, "loss_per_token": 0.10380045354734485, "tokens": 1457, "seconds": 32.59, "peak_gb": 3.95}
+{"stage": "sft", "epoch": 0, "step": 15, "loss_per_token": 0.10976237969587162, "tokens": 1289, "seconds": 50.12, "peak_gb": 3.95}

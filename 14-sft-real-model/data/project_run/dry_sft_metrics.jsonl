@@ -1,0 +1,6 @@
+{"stage": "sft", "epoch": 0, "step": 1, "loss_per_token": 2.325957183971388, "tokens": 1143, "seconds": 31.33, "peak_gb": 3.72}
+{"stage": "sft", "epoch": 0, "step": 2, "loss_per_token": 1.66836858428685, "tokens": 1130, "seconds": 35.39, "peak_gb": 3.83}
+{"stage": "sft", "epoch": 0, "step": 3, "loss_per_token": 0.6919787361173172, "tokens": 1355, "seconds": 46.17, "peak_gb": 3.89}
+{"stage": "sft", "epoch": 0, "step": 4, "loss_per_token": 0.17186076837628544, "tokens": 1116, "seconds": 39.73, "peak_gb": 3.89}
+{"stage": "sft", "epoch": 0, "step": 5, "loss_per_token": 0.09553227747293343, "tokens": 1064, "seconds": 30.61, "peak_gb": 3.89}
+{"stage": "sft", "epoch": 0, "step": 6, "loss_per_token": 0.09783590024596853, "tokens": 1162, "seconds": 31.1, "peak_gb": 3.89}
