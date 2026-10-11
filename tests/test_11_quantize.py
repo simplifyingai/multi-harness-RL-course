@@ -530,6 +530,7 @@ def test_the_prompt_holds_the_tables_and_the_question() -> None:
     assert prompt.count("CREATE TABLE") == 3
     assert "CREATE TABLE flights (" in prompt
     assert task.question in prompt and "```sql" in prompt
+    assert "the answer and nothing else: one column" in prompt
 
 
 @pytest.mark.parametrize(

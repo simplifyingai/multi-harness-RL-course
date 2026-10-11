@@ -7,9 +7,10 @@ Three fixed sets, the same for every build:
   difficulty) exactly as the project's ``mhrl/cli.py::balanced`` does (a plain
   first 24 would be one database's easy questions). These are single-turn: the
   model sees the database's tables and the question, and gets one reply to
-  write one SQL query. The query runs on a read-only copy of the database,
-  its result becomes an answer as chapter 1's ``make_tasks.py`` formats one,
-  and chapter 1's grader judges it.
+  write one SQL query whose result is the answer alone, one column. The
+  query runs on a read-only copy of the database, its result becomes an
+  answer as chapter 1's ``make_tasks.py`` formats one (from the first
+  column), and chapter 1's grader judges it.
 - **20 training questions** for agreement, asked the way chapter 10 asked its
   question: "<question> Answer with one SQL query."
 - **The gold SQL of those 20** as the texts whose log-probability is measured.
@@ -33,9 +34,14 @@ PASS_RATE_QUESTIONS = 24  # the project evaluates 24 held-out tasks per harness
 AGREEMENT_QUESTIONS = 20
 AGREEMENT_SUFFIX = " Answer with one SQL query."  # chapter 10's wording
 SCHEMA_QUERY = "SELECT sql FROM sqlite_master WHERE type = 'table' ORDER BY name"
+# Like chapter 1's instruction ("write ONLY the answer"), the prompt asks for
+# the answer alone: the answer is read from the result's first column, as
+# chapter 1's make_tasks.py formats gold answers, so a query that lists an id
+# first would be graded on the id.
 SINGLE_TURN_PROMPT = (
     "A SQLite database has these tables:\n\n{schema}\n\n{question}\n"
-    "Answer with one SQL query, in a ```sql code block."
+    "Answer with one SQL query whose result is the answer and nothing else: one "
+    "column, one row per item if it is a list. Put it in a ```sql code block."
 )
 THINK_END = "</think>"
 SQL_BLOCK_RE = re.compile(r"```sql\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
