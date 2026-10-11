@@ -908,4 +908,4 @@ model     ~/.cache/mhrl-course/models/LFM2.5-2.6B-MLX-4bit
 - **Unified memory**: one pool of memory that the CPU and the GPU share on an
   Apple-silicon Mac, so the model is loaded once and never copied to a GPU.
 
-Next: chapter 12, How the model picks each token.
+Next: [chapter 12](../12-generate/), How the model picks each token.
