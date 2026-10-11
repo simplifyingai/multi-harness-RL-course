@@ -19,8 +19,8 @@ cd multi-harness-RL-course/10-meet-lfm
 uv run download.py
 ```
 
-The download is 5.41 GB and takes a few minutes on a fast connection (8
-minutes here). It goes into `COURSE_HOME/models` (default
+The download is 5.41 GB and takes a few minutes on a fast connection (8 to
+10 minutes here). It goes into `COURSE_HOME/models` (default
 `~/.cache/mhrl-course/models`), which every later chapter reuses, so it happens
 once. The scripts write their own outputs under `COURSE_HOME/10-meet-lfm`,
 never into this folder.
