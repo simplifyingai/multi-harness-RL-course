@@ -48,7 +48,7 @@ from mlx_lm import stream_generate
 from sql_questions import extract_sql
 
 SCRIPT = "ask.py"
-TITLE = "our 4-bit LFM2.5-2.6B answers, on this laptop"
+TITLE = "the 4-bit LFM2.5-2.6B answers, on this laptop"
 QUESTION = "How many customers live in Paris? Answer with one SQL query."
 MAX_TOKENS = 1_024  # the project's output cap in training and evaluation
 MIN_TOKENS = 1  # the smallest length cap mlx-lm accepts

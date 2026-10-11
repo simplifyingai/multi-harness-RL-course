@@ -961,7 +961,7 @@ def print_before_after(
         )
         return
     print("\nbefore and after: chapter 10's bfloat16 run of the same question")
-    print(f"{INDENT}{'':<14}{'bfloat16':>{COLUMN}}{'ours, 4-bit':>{COLUMN}}")
+    print(f"{INDENT}{'':<14}{'bfloat16':>{COLUMN}}{'4-bit':>{COLUMN}}")
     rows = (
         ("weights", gigabytes(before["weight_bytes"]), gigabytes(loaded.weight_bytes)),
         (
