@@ -117,7 +117,7 @@ def print_header(
     print(f"student: chapter 4's softmax policy, one set of weights; it sees {calls}")
     print(
         "loss per call = -log p(teacher's action); what the environment sends"
-        " back is never scored"
+        " back is never trained on"
     )
     levels = ", ".join(f"{count} {level}" for level, count in by_level.items())
     total = sum(by_level.values())
@@ -150,7 +150,7 @@ def print_demonstrations(demos: Sequence[Demonstration]) -> None:
     print("the first demonstration of each path")
     print(
         "(left: the teacher's action, trained; right: what came back, read and"
-        " never scored)"
+        " never trained on)"
     )
     seen: set[str] = set()
     for demo in demos:
@@ -177,7 +177,7 @@ def print_rows(demos: Sequence[Demonstration], rows: int, trained: int) -> None:
     paths = ", ".join(f"{count} {path}" for path, count in counts.items() if count)
     print(f"paths: {paths}")
     print(
-        f"trained: {trained} actions, the teacher's; never scored: {len(demos)}"
+        f"trained: {trained} actions, the teacher's; never trained on: {len(demos)}"
         f" questions and {trained} replies"
     )
     print()

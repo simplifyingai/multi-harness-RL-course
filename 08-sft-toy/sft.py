@@ -12,7 +12,7 @@ sequence of pieces: the question, then each call's action (the teacher's)
 and observation (the environment's). Its ``loss_mask`` is 1 on the teacher's
 pieces and 0 on everything else, as the project's capture proxy marks the
 teacher's tokens. ``item_from_sequence`` keeps the masked positions only, so
-the student is scored on the teacher's actions and never on the
+the student is trained on the teacher's actions and never on the
 environment's replies: those are what it reads, not what it writes.
 
 ``batches`` is the project's line for line, and ``train_sft`` follows its

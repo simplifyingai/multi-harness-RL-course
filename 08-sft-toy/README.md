@@ -104,7 +104,7 @@ sft_toy · teacher varied · seed 0 · lr 3 · 120 demonstrations · batch 8 · 
 teacher: four paths: direct, peek, tables, verify (the project's teacher)
 demonstrations: the 15 easy training questions, 8 each, in a shuffled order
 student: chapter 4's softmax policy, one set of weights; it sees the call number
-loss per call = -log p(teacher's action); what the environment sends back is never scored
+loss per call = -log p(teacher's action); what the environment sends back is never trained on
 held out: 19 questions about 4 other cities: 8 easy, 7 medium, 4 hard
   LOOKs a question needs before its query works: easy 1, medium 2, hard 4
 ```
@@ -120,7 +120,7 @@ the 120 come to:
 
 ```text
 the first demonstration of each path
-(left: the teacher's action, trained; right: what came back, read and never scored)
+(left: the teacher's action, trained; right: what came back, read and never trained on)
 demonstration 1 (tables): How many customers live in Berlin?
   call 1  LOOK     customers: id, name, city, signup_date
   call 2  LOOK     orders: id, customer_id, order_date, payment_method
@@ -149,13 +149,13 @@ demonstration 8 (verify): How many customers live in Vienna?
 
 120 demonstrations, 120 right: 120 rows (the trainer keeps right ones only)
 paths: 32 direct, 24 peek, 32 tables, 32 verify
-trained: 632 actions, the teacher's; never scored: 120 questions and 632 replies
+trained: 632 actions, the teacher's; never trained on: 120 questions and 632 replies
 ```
 
 A demonstration is a sequence: the question, then each call's action and
 what came back. The trainer gives each piece a 1 or a 0, its **loss mask**: 1
 for the teacher's actions, 0 for the question and for every reply. Only the 1s
-are scored. The student is trained to pick the teacher's action in the
+are trained. The student is trained to pick the teacher's action in the
 situation the teacher was in, and it is never asked to predict what the
 environment would say back. Those replies are what it reads, not what it
 writes. The project does the same with tokens: its capture proxy marks the
@@ -305,7 +305,7 @@ uv run sft_toy.py --fixed-length
 
 ```text
 the first demonstration of each path
-(left: the teacher's action, trained; right: what came back, read and never scored)
+(left: the teacher's action, trained; right: what came back, read and never trained on)
 demonstration 1 (fixed): How many customers live in Berlin?
   call 1  LOOK     customers: id, name, city, signup_date
   call 2  QUERY_A  15
@@ -314,7 +314,7 @@ demonstration 1 (fixed): How many customers live in Berlin?
 
 120 demonstrations, 120 right: 120 rows (the trainer keeps right ones only)
 paths: 120 fixed
-trained: 480 actions, the teacher's; never scored: 120 questions and 480 replies
+trained: 480 actions, the teacher's; never trained on: 120 questions and 480 replies
 ```
 
 ```text
@@ -933,7 +933,7 @@ demonstrations, captured through mini-swe-agent and Claude Code
 120 demonstrations (60 mini-swe-agent, 60 claude-code), 120 right and kept
 tokens in them: 209,711
   the teacher's replies (loss mask 1): 20,371, trained
-  the rest (189,340: the harness's instructions and the tool outputs): read, never scored
+  the rest (189,340: the harness's instructions and the tool outputs): read, never trained on
 batch 8, 1 epoch: 15 steps
 
 step  loss per token  tokens
@@ -1094,7 +1094,7 @@ success is possible, and RL then improves on the teacher by its own results.
   that knows the answer key.
 - **Loss mask**: a 1 or a 0 per piece of a demonstration; only the 1s, the
   teacher's moves, are trained. What came back from the environment is read,
-  never scored.
+  never trained on.
 - **Cross-entropy (next-token) loss**: minus the log of the probability the
   student gave the teacher's move. Sure and right costs almost nothing; unsure
   costs more.

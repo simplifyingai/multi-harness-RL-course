@@ -205,7 +205,7 @@ def print_demos(demos: list[dict[str, Any]]) -> int:
     print(f"{INDENT}the teacher's replies (loss mask 1): {trained:,}, trained")
     print(
         f"{INDENT}the rest ({tokens - trained:,}: the harness's instructions and"
-        " the tool outputs): read, never scored"
+        " the tool outputs): read, never trained on"
     )
     return trained
 
