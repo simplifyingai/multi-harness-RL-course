@@ -764,9 +764,12 @@ went further than the toy: past the cap, all the way down. The toy shows the
 same direction (longer replies, fewer calls, more cut off, fewer right) and,
 at a high enough learning rate, the same collapse, but it does not show the
 bonus causing the collapse on its own. The real run also changed more than
-the toy does between its two attempts: attempt 2 paid for fewer tokens, used
-a learning rate a quarter as large and added the length guard. Chapter 26
-replays both runs.
+the toy does between its two attempts. Attempt 2 paid for fewer tokens, used
+a learning rate a quarter as large and added the length guard, and it ran
+after fixes to the trainer: float32 log-probabilities in the engine, AdamW
+bias correction (attempt 1 had none), training each shared prefix once and a
+narrower sandbox rule (the project's README, "Reproducing it exactly").
+Chapter 26 replays both runs.
 
 ## The run's log, and its curves
 
