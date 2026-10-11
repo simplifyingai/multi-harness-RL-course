@@ -758,4 +758,4 @@ answers are as good is chapter 11's question.
 - **Model license**: the terms that come with open weights; here, commercial
   use only for companies under $10 million in yearly revenue.
 
-Next: chapter 11, Quantize it yourself: 16 bits to 4.
+Next: [chapter 11](../11-quantize/), Quantize it yourself: 16 bits to 4.

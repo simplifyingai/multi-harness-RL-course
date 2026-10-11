@@ -57,7 +57,7 @@ About 258 minutes of video in 29 chapters.
 | ---: | --- | ---: | --- |
 | 9 | [From four choices to 128,000: tokens and chat templates](09-tokens-and-templates/) | 7 | ready |
 | 10 | [Meet LFM2.5-2.6B](10-meet-lfm/) | 10 | ready |
-| 11 | Quantize it yourself: 16 bits to 4 | 11 | coming |
+| 11 | [Quantize it yourself: 16 bits to 4](11-quantize/) | 11 | ready |
 | 12 | How the model picks each token | 8 | coming |
 
 ### Part 4. Training the real model where we own the loop
