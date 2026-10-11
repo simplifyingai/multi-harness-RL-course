@@ -643,3 +643,18 @@ def test_the_schema_is_read_without_writing(tmp_path: Path) -> None:
     assert path.read_bytes() == before
     with pytest.raises(sqlite3.Error):
         sql_questions.schema_text(tmp_path / "missing.db")
+
+
+def test_a_query_cannot_attach_or_create_another_file(tmp_path: Path) -> None:
+    """mode=ro guards one file; ATTACH would create another (chapter 14's review)."""
+    db = tmp_path / "data.db"
+    with sqlite3.connect(db) as setup:
+        setup.execute("CREATE TABLE t (x INTEGER)")
+    connection = sql_questions.connect_read_only(db)
+    target = tmp_path / "made.db"
+    with pytest.raises(sqlite3.DatabaseError):
+        connection.execute(f"ATTACH '{target}' AS other")
+    with pytest.raises(sqlite3.DatabaseError):
+        connection.execute("CREATE TABLE u (y INTEGER)")
+    assert not target.exists()
+    assert connection.execute("SELECT count(*) FROM t").fetchone() == (0,)

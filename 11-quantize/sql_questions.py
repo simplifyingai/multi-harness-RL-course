@@ -30,6 +30,9 @@ from typing import Any
 from grader import check_answer
 from tasks import DATA_DIR, LIST, NUMBER, TEST_FILE, TRAIN_FILE, Task, load_tasks
 
+QUERY_ONLY = "PRAGMA query_only = ON"  # no statement may write, to any database
+REFUSED_ACTIONS = (sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH)
+
 PASS_RATE_QUESTIONS = 24  # the project evaluates 24 held-out tasks per harness
 AGREEMENT_QUESTIONS = 20
 AGREEMENT_SUFFIX = " Answer with one SQL query."  # chapter 10's wording
@@ -153,8 +156,25 @@ def database_path(task: Task, folder: Path = DATA_DIR) -> Path:
     return folder / task.db_file
 
 
+def refuse_attach(action: int, *_: object) -> int:
+    """Tell SQLite to refuse ATTACH and DETACH, and allow everything else.
+
+    ``mode=ro`` guards only the database opened: a model-written
+    ``ATTACH 'x.db' AS x`` would otherwise create a file wherever the process
+    can write (found by chapter 14's code review).
+
+    Args:
+        action: The kind of operation SQLite is about to prepare.
+        *_: The operation's details (names), not needed here.
+
+    Returns:
+        ``sqlite3.SQLITE_DENY`` for ATTACH and DETACH, else ``SQLITE_OK``.
+    """
+    return sqlite3.SQLITE_DENY if action in REFUSED_ACTIONS else sqlite3.SQLITE_OK
+
+
 def connect_read_only(path: Path) -> sqlite3.Connection:
-    """Open a database so that no query can change it.
+    """Open a database so that no query can change it, or any other file.
 
     Args:
         path: The database file.
@@ -166,7 +186,10 @@ def connect_read_only(path: Path) -> sqlite3.Connection:
         sqlite3.Error: If it cannot be opened.
     """
     # A file: URI, escaped, so a folder name with # or ? cannot cut it short.
-    return sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    connection.execute(QUERY_ONLY)
+    connection.set_authorizer(refuse_attach)
+    return connection
 
 
 def schema_text(path: Path) -> str:
