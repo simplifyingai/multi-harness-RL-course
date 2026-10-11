@@ -49,7 +49,7 @@ you read them, skip to [Run it](#run-it).
   recorded log-probabilities can show that.
 - **Chapter 8, imitation (SFT).** **Supervised fine-tuning** trains on a
   teacher's demonstrations, making `-log p(teacher's action)` smaller at each
-  call, and never scores what the environment sends back. The project's SFT
+  call, and never trains on what the environment sends back. The project's SFT
   used 120 demonstrations, batch 8, one epoch: 15 steps. A student copies
   whatever its examples share, so a teacher that always takes four calls
   teaches "stop on call 4", not "stop after saving". SFT before RL gives RL
@@ -167,9 +167,9 @@ has one row of numbers for every id, and it was built with 128,000 rows (the
 `vocab_size` in its `config.json`, which chapter 10 reads). No text ever turns
 into the last 2,983 ids, so those rows are never used.
 
-So here is the title: chapter 2's agent scored 4 queries and picked one. Every
-time LFM2.5-2.6B writes a token, it scores all 128,000 rows and picks one
-(chapter 12 shows how). Its policy has the same shape as chapter 2's, with
+So here is the title: chapter 2's agent kept a score for each of 4 queries
+and picked one. Every time LFM2.5-2.6B writes a token, it gives each of the
+128,000 rows a chance and picks one (chapter 12 shows how). Its policy has the same shape as chapter 2's, with
 128,000 actions instead of four.
 
 ## Special tokens
