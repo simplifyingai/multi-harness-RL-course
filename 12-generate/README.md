@@ -916,4 +916,4 @@ records `log_softmax(scores / T)`, and casts the scores to float32 first.
 - **KV cache**: the keys and values (and, in LFM2, convolution state) kept
   from earlier tokens, so a new token does not re-read them.
 
-Next: chapter 13, LoRA: train a 0.4% add-on, not the whole model.
+Next: [chapter 13](../13-lora/), LoRA: train a 0.4% add-on, not the whole model.
