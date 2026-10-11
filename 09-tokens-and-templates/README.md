@@ -563,4 +563,4 @@ matches `lfm.py`'s ids exactly.
 - **Hugging Face Hub**: the website where models are published as folders of
   files that programs download.
 
-Next: [chapter 10](../README.md#chapters), Meet LFM2.5-2.6B.
+Next: [chapter 10](../10-meet-lfm/), Meet LFM2.5-2.6B.
