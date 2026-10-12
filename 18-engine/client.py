@@ -42,7 +42,6 @@ from tiny_harness_http import (
     DEFAULT_BASE_URL,
     DEFAULT_TASK,
     MODEL_NAME,
-    TOOL_ROLE,
     USER,
     Chat,
     EngineError,
@@ -50,6 +49,7 @@ from tiny_harness_http import (
     execute,
     http_chat,
     start_messages,
+    tool_message,
 )
 
 SCRIPT = "client.py"
@@ -72,6 +72,7 @@ PROBE_TOP = 5
 PROBE_MIN_GAP = 0.5  # flatter than this, the ratio would be noise
 SENTINEL = 100.0  # a "logprob" this large is an engine's stand-in for -inf
 PROCESSED, RAW, UNKNOWN = "processed", "raw", "unknown"
+RAW_RATIO = 1.0  # raw scores ignore the temperature: the gap stays the same
 INDENT = "  "
 
 
@@ -156,9 +157,7 @@ def follow_up(
         return [kept, {"role": USER, "content": GO_ON}]
     workdir = prepare_workdir(find_task(task_id), work_folder(LABEL, task_id))
     results = [
-        {"role": TOOL_ROLE, "tool_call_id": call["id"]}
-        | {"content": execute(call, tools, workdir).output}
-        for call in calls
+        tool_message(call["id"], execute(call, tools, workdir).output) for call in calls
     ]
     return [kept | {"tool_calls": calls}, *results]
 
@@ -230,7 +229,15 @@ def demo_queue(chat: Chat) -> None:
     start = time.perf_counter()
 
     def one(task_id: str) -> tuple[str, float, dict[str, Any]]:
-        """Send one question's first call; return when it was answered."""
+        """Send one question's first call, at the same moment as the others.
+
+        Args:
+            task_id: The question.
+
+        Returns:
+            The question, when its answer came (seconds from the start), and
+            the answer.
+        """
         body = request(
             start_messages(find_task(task_id)),
             tools=tools,
@@ -316,7 +323,7 @@ def probe(chat: Chat) -> Probe:
         return Probe(gaps, None, UNKNOWN)
     ratio = gaps[1] / gaps[0]
     expected = PROBE_TEMPERATURES[0] / PROBE_TEMPERATURES[1]  # 0.5 when tempered
-    verdict = RAW if abs(ratio - 1.0) < abs(ratio - expected) else PROCESSED
+    verdict = RAW if abs(ratio - RAW_RATIO) < abs(ratio - expected) else PROCESSED
     return Probe(gaps, ratio, verdict)
 
 

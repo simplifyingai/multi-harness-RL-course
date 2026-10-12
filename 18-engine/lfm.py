@@ -13,13 +13,15 @@ what chapter 18 needs. ``sample`` is chapter 12's loop over mlx-lm's
   top-p, no top-k). At temperature 0 the untempered distribution is reported;
 - **alternatives**: on request, the likeliest few tokens at each position.
 
-MLX computes lazily and keeps per-thread streams, so the weights are read
-into memory here, at load, and every later step runs on the engine's one
-worker thread.
+MLX computes lazily and keeps a stream and a random-number state per
+thread, so the weights are read into memory here, at load, every later step
+runs on the engine's one worker thread, and the seed is set on the thread
+that samples (set at load, it would never reach the worker).
 """
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -69,12 +71,18 @@ def tempered(logprobs: mx.array, temperature: float) -> mx.array:
     return scaled - mx.logsumexp(scaled)
 
 
+class NotLfm2Error(Exception):
+    """Raised when a build has no attention layer to count cached tokens by."""
+
+
 class LfmModel(LfmText):
     """LFM2.5-2.6B in 4 bits: the chat template, the tokenizer and the weights.
 
     Attributes:
         model: The network, every weight in memory.
         attention_layer: The first attention layer, whose cache counts tokens.
+        seed: MLX's random seed, set once on each thread that samples.
+        seeded: The threads it has been set on.
         folder: The build it was loaded from.
         seconds: How long loading took.
     """
@@ -85,6 +93,9 @@ class LfmModel(LfmText):
         Args:
             folder: The build's folder (read only; nothing is downloaded).
             seed: MLX's random seed, for replies drawn above temperature 0.
+
+        Raises:
+            NotLfm2Error: If the build has no attention layer.
         """
         start = time.perf_counter()
         model, tokenizer = load(str(folder))
@@ -95,12 +106,16 @@ class LfmModel(LfmText):
         self.model = model
         # LFM2 mixes attention and convolution layers; a convolution layer
         # keeps a small fixed state, an attention layer one entry per token.
-        self.attention_layer = next(
+        attention = [
             index
             for index, layer in enumerate(model.layers)
             if getattr(layer, "is_attention_layer", False)
-        )
-        mx.random.seed(seed)
+        ]
+        if not attention:
+            raise NotLfm2Error(f"{folder} has no attention layer: not an LFM2 build")
+        self.attention_layer = attention[0]
+        self.seed = seed
+        self.seeded: set[int] = set()
         self.folder = folder
         self.seconds = time.perf_counter() - start
 
@@ -163,6 +178,10 @@ class LfmModel(LfmText):
             The reply, each token with its log-probability.
         """
         start = time.perf_counter()
+        thread = threading.get_ident()
+        if thread not in self.seeded:  # MLX's random state belongs to a thread
+            mx.random.seed(self.seed)
+            self.seeded.add(thread)
         drawing = sampling.temperature > GREEDY
         scale = sampling.temperature if drawing else UNTEMPERED
         tokens: list[int] = []

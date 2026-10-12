@@ -35,7 +35,8 @@ Text is not ids: the same text can be cut into other tokens (chapter 9).
 ``--recorded`` reads two replies the project's engine sampled at temperature
 1 in its GRPO run (``data/recorded_replies.json``): one whose tool call the
 template re-spells, and one whose own text cuts into other tokens, which
-putting the text back cannot fix. It loads only the tokenizer.
+putting the text back cannot fix. It loads only the tokenizer (uv installs
+MLX either way, for the run above).
 """
 
 from __future__ import annotations
@@ -54,11 +55,11 @@ from tasks import DATA_DIR, find_task, prepare_workdir
 from tiny_harness_http import (
     ASSISTANT,
     DEFAULT_TASK,
-    TOOL_ROLE,
     USER,
     bash_schema,
     execute,
     start_messages,
+    tool_message,
 )
 from toolcalls import (
     THINK_CLOSE,
@@ -71,7 +72,10 @@ from toolcalls import (
 SCRIPT = "drift.py"
 LABEL = "drift"  # this script's work folder
 RECORDED_FILE = DATA_DIR / "recorded_replies.json"
-RESPELLED, RECUT = "re-spelled", "re-cut"
+RESPELLED, RECUT = "re-spelled", "re-cut"  # the two recorded replies' names
+IN_REASONING = "in the reasoning"
+IN_TOOL_CALL = "in the tool-call span"
+IN_VISIBLE = "in the visible text"
 WINDOW = 3  # tokens shown on each side of a difference
 STAND_IN = "(a recorded reply follows; the project's prompt is not bundled)"
 NOT_RERUN = "(the recorded tool result is not bundled)"
@@ -157,12 +161,12 @@ def where(model: Model, reply: list[int], offset: int) -> str:
         ``in the reasoning``, ``in the tool-call span`` or ``in the visible text``.
     """
     before = model.decode(reply[:offset])
-    reasoning, closed, answer = before.partition(THINK_CLOSE)
+    _, closed, answer = before.partition(THINK_CLOSE)
     if not closed:
-        return "in the reasoning"
+        return IN_REASONING
     if answer.count(TOOL_CALL_START) > answer.count(TOOL_CALL_END):
-        return "in the tool-call span"
-    return "in the visible text"
+        return IN_TOOL_CALL
+    return IN_VISIBLE
 
 
 def window(model: Model, ids: list[int], position: int) -> str:
@@ -241,7 +245,9 @@ def copy_of(content: str, calls: list[dict[str, Any]]) -> dict[str, Any]:
     return copy
 
 
-def rerender(model: Model, messages: list[dict[str, Any]], tools: list) -> list[int]:
+def rerender(
+    model: Model, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+) -> list[int]:
     """Render a conversation with no help from the engine's memory.
 
     Args:
@@ -281,8 +287,7 @@ def run_live(fast: bool) -> None:
     copy = copy_of(completion.reply.content, completion.tool_calls)
     workdir = prepare_workdir(task, work_folder(LABEL, task.task_id))
     results = [
-        {"role": TOOL_ROLE, "tool_call_id": call["id"]}
-        | {"content": execute(call, tools, workdir).output}
+        tool_message(call["id"], execute(call, tools, workdir).output)
         for call in completion.tool_calls
     ]
     print("\n2. the copy a harness keeps and sends back (OpenAI JSON)")
@@ -356,10 +361,7 @@ def respelled(model: Model, reply: Recorded) -> list[str]:
     parsed = split_reply(model.decode(written), tools)
     calls = openai_tool_calls(parsed.calls)
     copy = harness_copy(copy_of(parsed.content, calls)) | {REASONING: parsed.reasoning}
-    results = [
-        {"role": TOOL_ROLE, "tool_call_id": call["id"], "content": NOT_RERUN}
-        for call in calls
-    ]
+    results = [tool_message(call["id"], NOT_RERUN) for call in calls]
     rendered = rerender(model, [*messages, copy, *results], tools)
     return describe(model, compare(chain, rendered, len(prompt)), chain, rendered)
 
@@ -378,15 +380,16 @@ def recut(model: Model, reply: Recorded) -> list[str]:
     position = first_difference(reply.token_ids, again)
     if position is None:
         return ["its text cuts into the same tokens"]
+    before = max(position - 1, 0)  # one token of context, if there is one
     drawn = [
         f"{model.decode([token])!r} ({logprob:.2f})"
         for token, logprob in zip(
-            reply.token_ids[position - 1 : position + 2],
-            reply.logprobs[position - 1 : position + 2],
+            reply.token_ids[before : position + 2],
+            reply.logprobs[before : position + 2],
             strict=True,
         )
     ]
-    cut = [repr(model.decode([token])) for token in again[position - 1 : position + 1]]
+    cut = [repr(model.decode([token])) for token in again[before : position + 1]]
     return [
         f"{len(reply.token_ids)} tokens sampled; its text encodes to {len(again)}",
         f"first difference: token {position + 1} of the reply",

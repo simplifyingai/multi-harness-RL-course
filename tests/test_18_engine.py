@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import io
 import json
 import math
@@ -481,10 +482,21 @@ def test_top_logprobs_up_to_20_come_back_in_token_id_form(first_messages: list) 
         ({"n": 2}, "n must be 1"),
         ({"temperature": -0.5}, "temperature must be 0 or more"),
         ({"temperature": "hot"}, "temperature must be a number"),
-        ({"max_tokens": "many"}, "max_tokens must be a number"),
-        ({"tools": "bash"}, "tools must be a list"),
+        ({"temperature": float("nan")}, "temperature must be a number"),
+        ({"max_tokens": "many"}, "max_tokens must be a whole number"),
+        ({"top_logprobs": 2.7}, "top_logprobs must be a whole number"),
+        ({"n": True}, "n must be a whole number"),
+        ({"stop": 5}, "stop must be a text or a list of texts"),
+        ({"stop": [""]}, "none of them empty"),
+        ({"stop": ["ok", 3]}, "stop must be a text or a list of texts"),
+        ({"tools": "bash"}, "tools must be a list of objects"),
+        ({"tools": ["bash"]}, "tools must be a list of objects"),
         ({"messages": []}, "messages must be a non-empty list"),
         ({"messages": ["hi"]}, "every message must be an object"),
+        (
+            {"messages": [{"role": "assistant", "tool_calls": ["ls"]}]},
+            "tool_calls must be a list of objects",
+        ),
     ],
 )
 def test_requests_the_engine_cannot_answer_are_refused(
@@ -492,6 +504,27 @@ def test_requests_the_engine_cannot_answer_are_refused(
 ) -> None:
     with pytest.raises(engine.BadRequest, match=says):
         engine.read_request(body(first_messages) | fields)
+
+
+def test_null_fields_mean_their_defaults(first_messages: list) -> None:
+    fields = {"n": None, "temperature": None, "top_logprobs": None, "stop": None}
+    sampling = engine.read_request(body(first_messages) | fields).sampling
+    assert sampling == Sampling(1_024, 1.0, 0, ())
+    assert engine.read_request(body(first_messages, stop="END")).sampling.stop == (
+        "END",
+    )
+
+
+def test_a_body_that_is_not_json_is_refused_as_openai_does() -> None:
+    app = engine.create_app(engine.Engine(FakeModel([])))
+    with _asgi(app) as http:
+        broken = http.post("/v1/chat/completions", content=b"{not json")
+        listed = http.post("/v1/chat/completions", json=[1, 2])
+    for response in (broken, listed):
+        assert response.status_code == 400
+        assert response.json()["error"]["type"] == "invalid_request_error"
+    assert "not JSON" in broken.json()["error"]["message"]
+    assert "must be a JSON object" in listed.json()["error"]["message"]
 
 
 # ------------------------------------------------------------------ the restore
@@ -576,6 +609,39 @@ def test_the_engine_forgets_the_oldest_reply(
         response = answer(core, body(first_messages))
         ids.append(response["choices"][0]["message"]["tool_calls"][0]["id"])
     assert list(core.replies) == [f"id:{ids[1]}", f"id:{ids[2]}"]
+
+
+def test_a_reply_used_again_is_forgotten_last(
+    first_messages: list, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(engine, "REMEMBERED_REPLIES", 2)
+    replies = [call_reply("ls a"), call_reply("ls b"), answer_reply()]
+    core = engine.Engine(FakeModel(replies))
+    first = answer(core, body(first_messages))
+    second = answer(core, body(first_messages))
+    # The first reply is used again, then a third is remembered: one must go,
+    # and it is the one not used since (oldest first, without the move).
+    answer(core, body(first_messages + harness_turn(first)))
+    kept = list(core.replies)
+    first_id = first["choices"][0]["message"]["tool_calls"][0]["id"]
+    second_id = second["choices"][0]["message"]["tool_calls"][0]["id"]
+    assert f"id:{first_id}" in kept and f"id:{second_id}" not in kept
+
+
+def test_a_copy_with_unknown_calls_is_never_found_by_its_text(
+    first_messages: list,
+) -> None:
+    core = engine.Engine(FakeModel([answer_reply("Checking."), answer_reply()]))
+    answer(core, body(first_messages))  # remembered under text:Checking.
+    stranger = {
+        "id": "call_not_ours",
+        "type": "function",
+        "function": {"name": "bash", "arguments": "{}"},
+    }
+    copy = {"role": "assistant", "content": "Checking.", "tool_calls": [stranger]}
+    result = tiny_harness_http.tool_message("call_not_ours", "")
+    answer(core, body([*first_messages, copy, result]))
+    assert core.stats.restored == 0 and core.stats.not_restored == 1
 
 
 def test_a_reply_whose_text_cuts_into_other_tokens_is_counted(
@@ -708,6 +774,21 @@ def test_a_busy_port_fails_at_once_and_names_the_port_flag() -> None:
     message = str(busy.value)
     assert f"127.0.0.1:{port} is in use" in message
     assert "--port" in message and "uv run engine.py --port 8119" in message
+
+
+def test_another_bind_failure_is_not_called_busy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Refusing(socket.socket):
+        def bind(self, address: Any) -> None:
+            raise PermissionError(errno.EACCES, "Permission denied")
+
+    monkeypatch.setattr(engine.socket, "socket", Refusing)
+    with pytest.raises(SystemExit) as refused:
+        engine.claim_port(80)
+    message = str(refused.value)
+    assert message.startswith("cannot listen on 127.0.0.1:80: Permission denied")
+    assert "--port" in message and "in use" not in message
 
 
 def test_a_free_port_is_claimed_and_listening() -> None:

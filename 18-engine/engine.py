@@ -3,6 +3,7 @@
 # dependencies = [
 #     "fastapi==0.142.2",
 #     "uvicorn==0.54.0",
+#     "jinja2==3.1.6",
 #     "mlx==0.32.3",
 #     "mlx-lm==0.32.0",
 #     "transformers==5.18.0",
@@ -13,9 +14,9 @@
 Real harnesses reach a model over HTTP in OpenAI's chat format: POST
 ``/v1/chat/completions`` with the messages and the tools, and get back a
 message (text, or tool calls as JSON) and the token usage. This is that
-server for our model, a slimmed copy of the project's ``mhrl/engine/policy.py``
-and ``server.py``: the Mac stand-in for the article's vLLM server, which
-needs NVIDIA GPUs. Besides the reply, it returns what hosted APIs never give
+server for our model, after the project's ``mhrl/engine/policy.py`` and
+``server.py``: the Mac stand-in for the article's vLLM server, which needs
+NVIDIA GPUs. Besides the reply, it returns what hosted APIs never give
 back, in vLLM's own fields:
 
 * ``prompt_token_ids``: the exact tokens the model read;
@@ -52,7 +53,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import errno
 import json
+import math
 import socket
 import time
 import uuid
@@ -62,7 +65,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from lfm_files import OUTPUT_CAP, SAMPLE_SEED, pick_model, short_path
 from policy import FINISH_STOP, Message, Model, RenderError, Sampled, Sampling, Tool
@@ -84,6 +87,9 @@ INVALID = "invalid_request_error"  # OpenAI's error type for a bad request
 TOO_LONG = "context_length_exceeded"  # OpenAI's error code for a long prompt
 ASSISTANT = "assistant"
 TOOL_CALLS = "tool_calls"  # the finish reason when a reply calls tools
+RESPONSE_ID_PREFIX = "chatcmpl-"  # OpenAI's ids for a chat completion
+RESPONSE_OBJECT = "chat.completion"
+TIMING_DIGITS = 3  # timings are reported to the millisecond
 ID_KEY = "id:"  # a remembered reply, looked up by one of its tool calls' ids
 TEXT_KEY = "text:"  # ... or by its visible text
 GIGABYTE = 1_000_000_000
@@ -92,7 +98,11 @@ PORT_BUSY = (
     "just stopped has not let go of it yet). Start the engine on a free port "
     "with --port, for example: uv run engine.py --port {example}"
 )
-RECUT = (
+PORT_REFUSED = (
+    "cannot listen on {host}:{port}: {reason}. Start the engine on another "
+    "port with --port, for example: uv run engine.py --port {example}"
+)
+RECUT_NOTE = (
     "note · this reply's text cuts into other tokens than the ones sampled: "
     "the next call can put the text back, not these exact tokens"
 )
@@ -179,27 +189,116 @@ class Stats:
     recut: int = 0
 
 
-def number(value: Any, kind: type, name: str) -> Any:
-    """Read one number from a request.
+def as_int(body: dict[str, Any], name: str, default: int) -> int:
+    """Read a whole number from a request, or its default when it is absent.
 
     Args:
-        value: What the request holds.
-        kind: ``int`` or ``float``.
-        name: The field's name, for the error.
+        body: The request's JSON body.
+        name: The field.
+        default: Its value when the field is absent or null.
 
     Returns:
         The number.
 
     Raises:
-        BadRequest: If it is not a number.
+        BadRequest: If the field holds anything but a whole number.
     """
-    try:
-        return kind(value)
-    except (TypeError, ValueError) as error:
-        raise BadRequest(f"{name} must be a number, not {value!r}") from error
+    value = body.get(name)
+    if value is None:
+        return default
+    whole = isinstance(value, int) or (isinstance(value, float) and value.is_integer())
+    if isinstance(value, bool) or not whole:  # True is an int to Python, not to JSON
+        raise BadRequest(f"{name} must be a whole number, not {value!r}")
+    return int(value)
 
 
-def read_request(body: dict[str, Any]) -> ChatRequest:
+def as_float(body: dict[str, Any], name: str, default: float) -> float:
+    """Read a number from a request, or its default when it is absent.
+
+    Args:
+        body: The request's JSON body.
+        name: The field.
+        default: Its value when the field is absent or null.
+
+    Returns:
+        The number.
+
+    Raises:
+        BadRequest: If the field holds anything but a finite number.
+    """
+    value = body.get(name)
+    if value is None:
+        return default
+    number = isinstance(value, int | float) and not isinstance(value, bool)
+    if not number or not math.isfinite(value):
+        raise BadRequest(f"{name} must be a number, not {value!r}")
+    return float(value)
+
+
+def read_messages(body: dict[str, Any]) -> tuple[list[Message], list[Tool] | None]:
+    """Check a request's conversation and tools: their shapes, not their words.
+
+    Args:
+        body: The request's JSON body.
+
+    Returns:
+        The messages, and the tools (None when there are none).
+
+    Raises:
+        BadRequest: If either is not a list of objects.
+    """
+    messages = body.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise BadRequest("messages must be a non-empty list")
+    if not all(isinstance(message, dict) for message in messages):
+        raise BadRequest("every message must be an object")
+    for message in messages:
+        calls = message.get("tool_calls") or []
+        if not isinstance(calls, list) or not all(isinstance(c, dict) for c in calls):
+            raise BadRequest("tool_calls must be a list of objects")
+    tools = body.get("tools") or None
+    if tools is not None and not (
+        isinstance(tools, list) and all(isinstance(tool, dict) for tool in tools)
+    ):
+        raise BadRequest("tools must be a list of objects")
+    return messages, tools
+
+
+def read_sampling(body: dict[str, Any]) -> Sampling:
+    """Check how a request asks for its reply to be drawn.
+
+    Args:
+        body: The request's JSON body.
+
+    Returns:
+        The sampling settings the engine will use.
+
+    Raises:
+        BadRequest: For anything the engine cannot answer as asked.
+    """
+    if body.get("stream"):
+        raise BadRequest("stream is not supported: the reply comes as one JSON body")
+    if as_int(body, "n", 1) != 1:
+        raise BadRequest("n must be 1: the engine samples one reply per request")
+    newer = body.get("max_completion_tokens") is not None  # OpenAI's newer name
+    cap_field = "max_completion_tokens" if newer else "max_tokens"
+    asked = as_int(body, cap_field, MAX_COMPLETION_TOKENS)
+    temperature = as_float(body, "temperature", DEFAULT_TEMPERATURE)
+    if temperature < 0:
+        raise BadRequest("temperature must be 0 or more")
+    top = as_int(body, "top_logprobs", 0)
+    if not 0 <= top <= MAX_TOP_LOGPROBS:
+        raise BadRequest(f"top_logprobs must be between 0 and {MAX_TOP_LOGPROBS}")
+    stop = body.get("stop") or []
+    stop = [stop] if isinstance(stop, str) else stop
+    if not isinstance(stop, list) or not all(isinstance(s, str) and s for s in stop):
+        raise BadRequest("stop must be a text or a list of texts, none of them empty")
+    # Like the project's engine, a reply is never longer than 1,024 tokens.
+    cap = max(1, min(asked, MAX_COMPLETION_TOKENS))
+    return Sampling(cap, temperature, top, tuple(stop))
+
+
+def read_request(body: Any) -> ChatRequest:
     """Check a chat request and read what the engine uses from it.
 
     Args:
@@ -211,33 +310,10 @@ def read_request(body: dict[str, Any]) -> ChatRequest:
     Raises:
         BadRequest: For anything the engine cannot answer as asked.
     """
-    messages = body.get("messages")
-    if not isinstance(messages, list) or not messages:
-        raise BadRequest("messages must be a non-empty list")
-    if not all(isinstance(message, dict) for message in messages):
-        raise BadRequest("every message must be an object")
-    tools = body.get("tools") or None
-    if tools is not None and not isinstance(tools, list):
-        raise BadRequest("tools must be a list")
-    if body.get("stream"):
-        raise BadRequest("stream is not supported: the reply comes as one JSON body")
-    if number(body.get("n", 1), int, "n") != 1:
-        raise BadRequest("n must be 1: the engine samples one reply per request")
-    asked = body.get("max_completion_tokens") or body.get("max_tokens")
-    asked = MAX_COMPLETION_TOKENS if asked is None else number(asked, int, "max_tokens")
-    temperature = body.get("temperature")
-    temperature = DEFAULT_TEMPERATURE if temperature is None else temperature
-    temperature = number(temperature, float, "temperature")
-    if temperature < 0:
-        raise BadRequest("temperature must be 0 or more")
-    top = number(body.get("top_logprobs") or 0, int, "top_logprobs")
-    if not 0 <= top <= MAX_TOP_LOGPROBS:
-        raise BadRequest(f"top_logprobs must be between 0 and {MAX_TOP_LOGPROBS}")
-    stop = body.get("stop") or ()
-    stop = (stop,) if isinstance(stop, str) else tuple(stop)
-    # Like the project's engine, a reply is never longer than 1,024 tokens.
-    cap = max(1, min(asked, MAX_COMPLETION_TOKENS))
-    return ChatRequest(messages, tools, Sampling(cap, temperature, top, stop))
+    if not isinstance(body, dict):
+        raise BadRequest("the request body must be a JSON object")
+    messages, tools = read_messages(body)
+    return ChatRequest(messages, tools, read_sampling(body))
 
 
 def harness_copy(message: Message) -> Message:
@@ -264,8 +340,8 @@ def harness_copy(message: Message) -> Message:
             try:
                 arguments = json.loads(arguments)
             except json.JSONDecodeError as error:
-                message = f"tool call arguments are not JSON: {error}"
-                raise BadRequest(message) from error
+                reason = f"tool call arguments are not JSON: {error}"
+                raise BadRequest(reason) from error
         if not isinstance(arguments, dict):
             raise BadRequest("tool call arguments must be a JSON object")
         calls.append({**call, "function": {**function, "arguments": arguments}})
@@ -275,7 +351,11 @@ def harness_copy(message: Message) -> Message:
 class Engine:
     """The model, the replies it remembers, its prompt caches and its counters.
 
-    Every method runs on the one worker thread, so nothing here needs a lock.
+    Every method runs on the one worker thread, so nothing here needs a lock
+    (``/admin/stats`` only reads the counters). A request whose caller hangs
+    up still runs to its end once it reaches the worker. A cache serves one
+    request at a time and cannot be copied, so of several requests with the
+    same prompt only the first finds it.
 
     Attributes:
         model: The model (``lfm.py``, or a scripted one in the tests).
@@ -312,7 +392,10 @@ class Engine:
 
         The copy has no reasoning, and its tool calls are JSON: rendered by
         the template, it would not be the tokens the model sampled. Putting
-        the original text back keeps every call on one token chain.
+        the original text back keeps every call on one token chain. A reply
+        with tool calls is found by their ids only; one without, by its
+        visible text (two replies with the same text, such as "Done.", share
+        one entry: the later one's).
 
         Args:
             message: One message of a request.
@@ -328,11 +411,12 @@ class Engine:
         calls = message.get("tool_calls") or []
         keys = [ID_KEY + str(call.get("id")) for call in calls]
         content = message.get("content")
-        if isinstance(content, str) and content:
+        if not calls and isinstance(content, str) and content:
             keys.append(TEXT_KEY + content)
         for key in keys:
             raw = self.replies.get(key)
             if raw is not None:
+                self.replies.move_to_end(key)  # used again: forgotten last
                 self.stats.restored += 1
                 return {"role": ASSISTANT, "content": raw}
         self.stats.not_restored += 1  # not a reply of ours (or long forgotten)
@@ -370,9 +454,11 @@ class Engine:
         Returns:
             A cache, and how many of the prompt's tokens it already holds.
         """
-        best, best_size = -1, 0
+        best, best_size = -1, 0  # an empty cache is no help: start at 0 tokens
         for index, (held, _) in enumerate(self.caches):
             size = len(held)
+            # Longer than the best so far, yet shorter than the prompt (at least
+            # one new token must be left to read), and the prompt's exact start.
             if best_size < size < len(prompt_ids) and prompt_ids[:size] == held:
                 best, best_size = index, size
         if best < 0:
@@ -412,9 +498,12 @@ class Engine:
             self.remember(ID_KEY + call["id"], raw)
         if reply.content:
             self.remember(TEXT_KEY + reply.content, raw)
-        if self.model.encode(text) != written:  # chapter 9: one text, many cuts
+        # Chapter 9: one text, many cuts. Encoding the text again (one more
+        # pass of the tokenizer per reply) tells whether putting the text back
+        # will give the next prompt these exact tokens.
+        if self.model.encode(text) != written:
             self.stats.recut += 1
-            print(RECUT, flush=True)
+            print(RECUT_NOTE, flush=True)
         return reply, calls
 
     def complete(self, request: ChatRequest) -> Completion:
@@ -462,6 +551,9 @@ def logprob_entry(model: Model, token_id: int, logprob: float) -> dict[str, Any]
     Returns:
         ``{"token", "logprob", "bytes"}``.
     """
+    # A token can be half a character (an emoji is several); decoded alone it
+    # becomes the replacement character, so its bytes are only right for
+    # whole characters, as in the project's engine.
     return {
         "token": f"token_id:{token_id}",
         "logprob": logprob,
@@ -498,8 +590,8 @@ def to_openai(model: Model, completion: Completion, waited: float) -> dict[str, 
         content.append(entry)
     read, wrote = len(completion.prompt_ids), len(sampled.token_ids)
     return {
-        "id": f"chatcmpl-{uuid.uuid4().hex}",
-        "object": "chat.completion",
+        "id": RESPONSE_ID_PREFIX + uuid.uuid4().hex,
+        "object": RESPONSE_OBJECT,
         "created": int(time.time()),
         "model": SERVED_MODEL,
         "prompt_token_ids": completion.prompt_ids,
@@ -520,9 +612,9 @@ def to_openai(model: Model, completion: Completion, waited: float) -> dict[str, 
         },
         # Not part of OpenAI's API: where the time went, as llama.cpp reports it.
         "timings": {
-            "waited_s": round(waited, 3),
-            "first_token_s": round(sampled.first_token_seconds, 3),
-            "total_s": round(completion.seconds, 3),
+            "waited_s": round(waited, TIMING_DIGITS),
+            "first_token_s": round(sampled.first_token_seconds, TIMING_DIGITS),
+            "total_s": round(completion.seconds, TIMING_DIGITS),
         },
     }
 
@@ -571,7 +663,15 @@ def create_app(engine: Engine) -> FastAPI:
     worker = ThreadPoolExecutor(max_workers=WORKER_THREADS, thread_name_prefix="model")
 
     def answer(request: ChatRequest, arrived: float) -> dict[str, Any]:
-        """Answer on the worker thread, timing the wait for it."""
+        """Answer on the worker thread, timing the wait for it.
+
+        Args:
+            request: The checked request.
+            arrived: When it reached the server (``time.perf_counter``).
+
+        Returns:
+            The response body.
+        """
         waited = time.perf_counter() - arrived
         return to_openai(engine.model, engine.complete(request), waited)
 
@@ -586,10 +686,14 @@ def create_app(engine: Engine) -> FastAPI:
         return {"object": "list", "data": [{"id": SERVED_MODEL, "object": "model"}]}
 
     @app.post("/v1/chat/completions")
-    async def chat(body: dict[str, Any]) -> JSONResponse:
+    async def chat(http: Request) -> JSONResponse:
         """Answer one chat request, after the requests ahead of it."""
         arrived = time.perf_counter()
         try:
+            try:
+                body = await http.json()
+            except ValueError as error:  # not JSON, or not UTF-8
+                raise BadRequest(f"the request body is not JSON: {error}") from error
             request = read_request(body)
             loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(worker, answer, request, arrived)
@@ -611,7 +715,9 @@ def claim_port(port: int) -> socket.socket:
     """Take the address before the model loads, so a busy port fails at once.
 
     No SO_REUSEADDR: with it, macOS lets a program bind 127.0.0.1 under one
-    that listens on every address, and take that program's traffic.
+    that listens on every address, and take that program's traffic. The price:
+    for about half a minute after an engine stops, its old connections still
+    hold the port, and a new engine there is told the port is in use.
 
     Args:
         port: The port (0 for any free one).
@@ -620,7 +726,7 @@ def claim_port(port: int) -> socket.socket:
         The socket, bound and listening.
 
     Raises:
-        SystemExit: If the port is taken, naming the --port flag.
+        SystemExit: If the port is taken or refused, naming the --port flag.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -628,7 +734,13 @@ def claim_port(port: int) -> socket.socket:
     except OSError as error:
         sock.close()
         example = EXAMPLE_PORT if port != EXAMPLE_PORT else EXAMPLE_PORT + 1
-        message = PORT_BUSY.format(host=HOST, port=port, example=example)
+        if error.errno == errno.EADDRINUSE:
+            message = PORT_BUSY.format(host=HOST, port=port, example=example)
+        else:  # a port below 1024, say, which needs administrator rights
+            reason = error.strerror or str(error)
+            message = PORT_REFUSED.format(
+                host=HOST, port=port, reason=reason, example=example
+            )
         raise SystemExit(message) from error
     sock.listen()  # callers wait in line while the model loads
     return sock

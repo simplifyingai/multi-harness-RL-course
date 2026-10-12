@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -228,6 +229,28 @@ def test_greedy_is_the_same_twice(tiny: lfm.LfmModel) -> None:
     one = tiny.sample(prompt, tiny.new_cache(), Sampling(6, 0.0))
     two = tiny.sample(prompt, tiny.new_cache(), Sampling(6, 0.0))
     assert one.token_ids == two.token_ids and one.logprobs == two.logprobs
+
+
+def test_the_seed_reaches_the_worker_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    network = tiny_model()
+    monkeypatch.setattr(lfm, "load", lambda folder: (network, TinyTokenizer()))
+
+    def draw_on_a_worker(seed: int) -> list[int]:
+        """Load with a seed here, then sample on another thread, as the engine does."""
+        model = lfm.LfmModel(Path("tiny"), seed=seed)
+        prompt = prompt_ids(model, QUESTION)
+        with ThreadPoolExecutor(max_workers=1) as worker:
+            sampled = worker.submit(
+                model.sample, prompt, model.new_cache(), Sampling(12, 2.0)
+            ).result()
+        return sampled.token_ids
+
+    mx.random.seed(99)  # whatever this thread's state is, the worker's is set
+    seven = draw_on_a_worker(7)
+    assert draw_on_a_worker(7) == seven
+    # A new thread starts from the same state every time, so only a seed that
+    # changes the draws proves it reached the worker.
+    assert draw_on_a_worker(8) != seven
 
 
 def test_the_alternatives_halve_their_gap_at_twice_the_temperature(

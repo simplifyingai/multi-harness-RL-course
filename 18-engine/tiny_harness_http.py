@@ -193,6 +193,10 @@ def http_chat(base_url: str, api_key: str) -> Chat:
             raise EngineError(f"HTTP {error.code}: {detail}", error.code) from error
         except urllib.error.URLError as error:  # nobody answered at all
             raise EngineError(f"cannot reach {url}: {error.reason}") from error
+        except OSError as error:  # a timeout, or a connection dropped midway
+            raise EngineError(f"no answer from {url}: {error}") from error
+        except json.JSONDecodeError as error:  # it answered, but not in JSON
+            raise EngineError(f"{url} did not answer in JSON: {error}") from error
 
     return chat
 
@@ -219,6 +223,19 @@ def bash_schema(name: str = TOOL_NAME) -> dict[str, Any]:
             },
         },
     }
+
+
+def tool_message(call_id: str, output: str) -> dict[str, Any]:
+    """Write a tool's result as OpenAI's API wants it: tied to its call by id.
+
+    Args:
+        call_id: The id of the call it answers.
+        output: What the tool printed.
+
+    Returns:
+        ``{"role": "tool", "tool_call_id": ..., "content": ...}``.
+    """
+    return {"role": TOOL_ROLE, "tool_call_id": call_id, "content": output}
 
 
 def start_messages(task: Task) -> list[dict[str, Any]]:
@@ -329,8 +346,7 @@ def run_rollout(
         for call in tool_calls:  # each result names the call it answers
             result = execute(call, tools, workdir)
             observations.append((call, result))
-            reply = {"role": TOOL_ROLE, "tool_call_id": call["id"]}
-            messages.append(reply | {"content": result.output})
+            messages.append(tool_message(call["id"], result.output))
         why = unreadable(message, choice["finish_reason"])
         in_a_row = in_a_row + 1 if why else 0
         if why and in_a_row < MAX_UNREADABLE:

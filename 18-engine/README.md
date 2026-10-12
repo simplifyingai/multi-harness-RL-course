@@ -118,14 +118,17 @@ every saved rollout go under `COURSE_HOME/18-engine/`.
 Line counts are honest ones: all lines, and in brackets the lines of code
 (no blank lines, comments or docstrings).
 
-- `engine.py`, 682 lines (330 of code): the server. It checks each request,
+- `engine.py`, 794 lines (375 of code): the server. It checks each request,
   puts the model's own text back in place of a harness's copy, renders the
   conversation into tokens, refuses a prompt over 16,384 tokens, takes the
   best prompt cache, samples on the one worker thread, and answers in
-  OpenAI's shape with vLLM's token fields. A slimmed copy of the project's
+  OpenAI's shape with vLLM's token fields. It follows the project's
   `mhrl/engine/policy.py` and `server.py` (869 lines, 500 of code, with
-  `toolcalls.py`). The engine's own two files, `engine.py` and
-  `toolcalls.py`, are 904 lines (426 of code).
+  `toolcalls.py`), without the adapter route and with more: stricter request
+  checks, the port check, timings, and a count of replies whose text cuts
+  into other tokens. The engine's own two files, `engine.py` and
+  `toolcalls.py`, are 1,016 lines (471 of code); with the model half
+  (`policy.py`, `lfm.py`, `lfm_text.py`), 1,513 lines (634 of code).
 - `toolcalls.py`, 222 lines (96 of code): chapter 17's parser (the project's
   `split_reply` and `parse_calls`), plus `openai_tool_calls`, which gives each
   call its id.
