@@ -32,8 +32,11 @@ DATABASE_FILE = "data.db"
 ANSWER_FILE = "answer.txt"
 
 # The course's one setting: where models, installs and run folders live.
+# (The default follows $HOME, like every chapter's; the box's own idea of
+# "home" is real_home() below, which ignores $HOME.)
 COURSE_HOME_ENV = "COURSE_HOME"
 DEFAULT_COURSE_HOME = Path.home() / ".cache" / "mhrl-course"
+TEXT_ENCODING = "utf-8"
 CHAPTER = "19-sandbox"
 
 # Folders inside COURSE_HOME/19-sandbox.
@@ -91,12 +94,21 @@ def course_home() -> Path:
     return Path(configured).expanduser() if configured else DEFAULT_COURSE_HOME
 
 
-def chapter_home() -> Path:
-    """Return this chapter's folder inside the course cache.
+def chapter_folder() -> Path:
+    """Return this chapter's folder inside the course cache, without making it.
 
     Returns:
-        ``$COURSE_HOME/19-sandbox``, created if missing and fully resolved,
-        because the sandbox matches real paths only.
+        ``$COURSE_HOME/19-sandbox``, resolved as far as it exists.
+    """
+    return (course_home() / CHAPTER).resolve()
+
+
+def chapter_home() -> Path:
+    """Return this chapter's folder inside the course cache, made if missing.
+
+    Returns:
+        ``$COURSE_HOME/19-sandbox``, created and fully resolved, because the
+        sandbox matches real paths only.
     """
     folder = course_home() / CHAPTER
     folder.mkdir(parents=True, exist_ok=True)
@@ -128,7 +140,7 @@ def show(text: str) -> str:
         short name.
     """
     replacements = [
-        (str(chapter_home()), SHOWN_CHAPTER_HOME),
+        (str(chapter_folder()), SHOWN_CHAPTER_HOME),
         (str(REPO_ROOT.resolve()), SHOWN_REPO),
         (str(real_home()), SHOWN_HOME),
     ]
@@ -144,7 +156,7 @@ def legend() -> list[str]:
         Two lines, with only the home folder shortened.
     """
     home = str(real_home())
-    chapter = str(chapter_home()).replace(home, SHOWN_HOME)
+    chapter = str(chapter_folder()).replace(home, SHOWN_HOME)
     repo = str(REPO_ROOT.resolve()).replace(home, SHOWN_HOME)
     return [
         f"{SHOWN_CHAPTER_HOME:<6} = {chapter}   (COURSE_HOME/{CHAPTER})",
@@ -163,7 +175,7 @@ def load_task() -> Task:
         ValueError: If it is not JSON.
         TypeError: If its fields are not a task record's.
     """
-    line = TASK_FILE.read_text(encoding="utf-8").strip()
+    line = TASK_FILE.read_text(encoding=TEXT_ENCODING).strip()
     return Task(**json.loads(line))
 
 

@@ -5,24 +5,32 @@
 """Run one command: logged to a file, time-limited, its whole tree reaped.
 
 A copy of the project's ``mhrl/harnesses/process.py``, plus a report of what
-was seen and killed, so the chapter can show it. A harness is a process tree,
-not a process: mini-swe-agent starts every shell command in a NEW session,
-and a model can background a job that outlives its shell. Killing only the
-first process would leave its children running after a timeout. So on exit
-or timeout the runner kills, in two passes:
+was seen, killed and left alive, so the chapter can show it. A harness is a
+process tree, not a process: mini-swe-agent starts every shell command in a
+NEW session, and a model can background a job that outlives its shell.
+Killing only the first process would leave its children running after a
+timeout. So on exit or timeout the runner kills:
 
 1. the command's own process group (while the command is unreaped, so its id
    cannot have been recycled);
 2. every descendant still attached to it, and every process in a process
-   group a descendant was seen using (the table is polled while it runs);
+   group a descendant was seen using (the table is polled every second while
+   it runs, and read once more just before the kill);
 3. every process whose environment carries this run's marker
    (``MHRL_RUN_ID=<hex>``), which catches orphans that left the tree and its
    group before a poll saw them. macOS hides the environment of Apple's own
    programs (``/bin/sh``, ``/bin/sleep``), so this sweep sees Python and Node
    orphans but not those; step 2 is what catches them.
 
-Steps 2 and 3 only signal processes that started after the run began, so a
-recycled process id can never take an older, unrelated process down with it.
+The whole sweep runs twice (two passes), to catch a child forked while the
+first pass was killing its parent. Steps 2 and 3 only signal processes that
+started after the run began, so a process older than the run is never
+touched, even if its id was recycled into the tree's groups. (A pid recycled
+DURING the run is not ruled out this way; on a laptop that is very unlikely.)
+
+Afterwards ``ps`` is asked whether anything seen, or anything carrying the
+marker, is still running; if ``ps`` itself fails, the outcome says so instead
+of reporting a clean reap.
 """
 
 from __future__ import annotations
@@ -53,6 +61,8 @@ POLL_INTERVAL_S = 1.0
 START_SLACK_S = 2.0
 # Two passes catch a child forked while the first pass was killing its parent.
 REAP_PASSES = 2
+# pid 1 is launchd; nothing at or below it is ever signalled.
+LAUNCHD_PID = 1
 # A killed process can stay in the table for a moment while it exits.
 SURVIVOR_WAIT_S = 2.0
 SURVIVOR_POLL_S = 0.1
@@ -88,7 +98,10 @@ class ProcessOutcome:
         root_pid: The command's process id (also its process group id).
         seen: Every process seen in the tree while it ran, by pid.
         signalled: The pids the sweeps sent SIGKILL to.
-        survivors: Pids from ``seen`` still alive after the reaping.
+        survivors: Pids still alive after the reaping: seen ones, and any
+            process carrying the run's marker.
+        ps_failed: Whether ``ps`` could not be read afterwards, so
+            ``survivors`` could not be checked.
     """
 
     exit_code: int | None
@@ -98,6 +111,7 @@ class ProcessOutcome:
     seen: dict[int, ProcessInfo] = field(default_factory=dict)
     signalled: frozenset[int] = frozenset()
     survivors: frozenset[int] = frozenset()
+    ps_failed: bool = False
 
 
 def _ps(columns: str, *extra: str) -> str:
@@ -203,16 +217,23 @@ def descendants(root_pid: int, table: Iterable[ProcessInfo]) -> list[ProcessInfo
     return found
 
 
-def _kill(pid: int) -> None:
+def _kill(pid: int) -> bool:
     """Send SIGKILL to one process, ignoring ones already gone.
 
     Args:
         pid: Process id.
+
+    Returns:
+        Whether the signal was sent. Pids 0 and 1 are refused: 0 would mean
+        the caller's own group, 1 is launchd.
     """
+    if pid <= LAUNCHD_PID:
+        return False
     try:
         os.kill(pid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
-        pass
+        return False
+    return True
 
 
 def _kill_group(pgid: int) -> None:
@@ -266,34 +287,25 @@ def kill_tree(
             targets.update(processes_with_marker(marker))
         targets.discard(os.getpid())
         for pid in targets & recent:
-            _kill(pid)
-            signalled.add(pid)
+            if _kill(pid):
+                signalled.add(pid)
     return signalled
 
 
-def kill_survivors(pids: Iterable[int]) -> None:
-    """Kill processes a ``group_only`` demo left running.
-
-    Args:
-        pids: Survivors reported by ``run_logged``.
-    """
-    for pid in pids:
-        _kill(pid)
-
-
-def still_alive(seen: Mapping[int, ProcessInfo]) -> set[int]:
+def still_alive(seen: Mapping[int, ProcessInfo], *, wait: bool = True) -> set[int]:
     """Return the seen processes that are still in the process table.
 
     A row counts only if its start time matches the one seen, so a recycled
-    pid is not mistaken for a survivor. Killed processes get a moment to exit.
+    pid is not mistaken for a survivor.
 
     Args:
         seen: Processes recorded while the command ran, by pid.
+        wait: Give killed processes up to two seconds to leave the table.
 
     Returns:
         The pids still running.
     """
-    deadline = time.monotonic() + SURVIVOR_WAIT_S
+    deadline = time.monotonic() + (SURVIVOR_WAIT_S if wait else 0)
     while True:
         alive = {
             row.pid
@@ -303,6 +315,60 @@ def still_alive(seen: Mapping[int, ProcessInfo]) -> set[int]:
         if not alive or time.monotonic() >= deadline:
             return alive
         time.sleep(SURVIVOR_POLL_S)
+
+
+def kill_survivors(seen: Mapping[int, ProcessInfo]) -> None:
+    """Kill processes a ``group_only`` demo left running.
+
+    Each is checked again (same pid, same start time) right before the kill.
+
+    Args:
+        seen: The survivors' rows, by pid.
+    """
+    for pid in still_alive(seen, wait=False):
+        _kill(pid)
+
+
+def record_tree(
+    seen: dict[int, ProcessInfo],
+    root_pid: int,
+    table: Iterable[ProcessInfo],
+    cutoff: float,
+) -> None:
+    """Add the root, its descendants and its group's members to ``seen``.
+
+    Args:
+        seen: Processes recorded so far, by pid (updated in place).
+        root_pid: The command's process, which leads its group.
+        table: A process table snapshot.
+        cutoff: Only processes started at or after this count (epoch s).
+    """
+    rows = list(table)
+    found = descendants(root_pid, rows)
+    found += [row for row in rows if row.pid == root_pid or row.pgid == root_pid]
+    for row in found:
+        if row.started >= cutoff and row.pid != os.getpid():
+            seen[row.pid] = row
+
+
+def marked(marker: str | None, cutoff: float) -> dict[int, ProcessInfo]:
+    """Find the live processes that carry the run's marker.
+
+    Args:
+        marker: The run's ``NAME=value`` token, or None.
+        cutoff: Only processes started at or after this count (epoch s).
+
+    Returns:
+        Their rows, by pid (never this process).
+    """
+    if not marker:
+        return {}
+    pids = processes_with_marker(marker) - {os.getpid()}
+    return {
+        row.pid: row
+        for row in process_table()
+        if row.pid in pids and row.started >= cutoff
+    }
 
 
 def run_logged(
@@ -330,8 +396,9 @@ def run_logged(
         timeout_s: Seconds before the tree is killed.
         marker: A unique ``NAME=value`` token in ``env``, used to find
             orphans that left the process tree.
-        group_only: Kill only the run's process group, as naive code would,
-            to show what the sweeps catch. Survivors are left running.
+        group_only: Kill only the run's process group (and only while the
+            command is unreaped), as naive code would, to show what the
+            sweeps catch. Survivors are left running.
 
     Returns:
         The exit status, duration, whether the timeout fired, and what the
@@ -341,6 +408,7 @@ def run_logged(
         OSError: If the command cannot be started.
     """
     started_wall = time.time()
+    cutoff = started_wall - START_SLACK_S
     start = time.monotonic()
     deadline = start + timeout_s
     seen: dict[int, ProcessInfo] = {}
@@ -365,17 +433,16 @@ def run_logged(
                     process.wait(timeout=min(POLL_INTERVAL_S, remaining))
                     break
                 except subprocess.TimeoutExpired:
-                    table = process_table()
-                    for row in table:
-                        if row.pid == process.pid:
-                            seen[row.pid] = row
-                    for row in descendants(process.pid, table):
-                        seen[row.pid] = row
+                    record_tree(seen, process.pid, process_table(), cutoff)
         finally:
+            # One last look, so a child forked since the last poll is known.
+            record_tree(seen, process.pid, process_table(), cutoff)
+            signalled: set[int] = set()
             if group_only:
-                # The naive way, for the demo: one signal to the run's group.
-                _kill_group(process.pid)
-                signalled: set[int] = set()
+                # The naive way, for the demo: one signal to the run's group,
+                # sent only while the root is unreaped (its id is still ours).
+                if process.returncode is None:
+                    _kill_group(process.pid)
             else:
                 signalled = kill_tree(
                     process.pid,
@@ -386,6 +453,11 @@ def run_logged(
                 )
             process.wait()
     exit_code = None if timed_out else process.returncode
+    # An empty table means ps failed: then nothing can be said about survivors.
+    ps_failed = not process_table()
+    leftovers = marked(marker, cutoff)
+    seen.update(leftovers)
+    survivors = still_alive(seen) if not ps_failed else set()
     return ProcessOutcome(
         exit_code=exit_code,
         seconds=time.monotonic() - start,
@@ -393,5 +465,6 @@ def run_logged(
         root_pid=process.pid,
         seen=seen,
         signalled=frozenset(signalled),
-        survivors=frozenset(still_alive(seen)),
+        survivors=frozenset(survivors),
+        ps_failed=ps_failed,
     )

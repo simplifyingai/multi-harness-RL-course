@@ -35,7 +35,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from process import ProcessOutcome, kill_survivors, run_logged, still_alive
+from process import (
+    REAP_PASSES,
+    ProcessOutcome,
+    kill_survivors,
+    run_logged,
+    still_alive,
+)
 from sandbox import (
     PROFILES,
     PROJECT_PROFILE,
@@ -49,6 +55,7 @@ from tasks import (
     LOGS_DIR,
     ROLLOUTS_DIR,
     STATE_DIR,
+    TEXT_ENCODING,
     chapter_home,
     legend,
     load_task,
@@ -76,7 +83,9 @@ TMP_SUBDIR = "tmp"
 LOG_SUFFIX = ".txt"
 EXIT_SANDBOX_UNAVAILABLE = 2
 EXIT_TIMED_OUT = 124  # what coreutils' timeout returns
-POLL_NOTE = "the table is polled every second"
+EXIT_SIGNAL_BASE = 128  # a shell reports death by signal N as 128 + N
+UNSAFE_NAMES = frozenset({"", ".", ".."})
+POLL_NOTE = "ps is read every second, and once more before the kill"
 
 
 @dataclass(frozen=True)
@@ -164,10 +173,14 @@ def new_rollout(
         The rollout.
 
     Raises:
+        ValueError: If the name is not a plain folder name.
         OSError: If the folders cannot be made or the database copied.
     """
     run_id = uuid.uuid4().hex
     name = name or f"run-{run_id[:RUN_ID_HEX_CHARS]}"
+    # The name becomes a folder that is deleted first: never a path.
+    if Path(name).name != name or name in UNSAFE_NAMES:
+        raise ValueError(f"a rollout name must be a plain folder name, not {name!r}")
     home_dir = chapter_home()
     workdir = home_dir / ROLLOUTS_DIR / name
     state_dir = home_dir / STATE_DIR / name
@@ -238,7 +251,7 @@ def run_in_box(
         marker=rollout.marker,
         group_only=group_only,
     )
-    return outcome, log_path.read_text(encoding="utf-8", errors="replace")
+    return outcome, log_path.read_text(encoding=TEXT_ENCODING, errors="replace")
 
 
 def describe_processes(outcome: ProcessOutcome, *, group_only: bool) -> list[str]:
@@ -252,8 +265,10 @@ def describe_processes(outcome: ProcessOutcome, *, group_only: bool) -> list[str
         Lines for the terminal.
     """
     seen = sorted(outcome.seen.values(), key=lambda row: row.pid)
+    if outcome.ps_failed:
+        return ["survivors  UNKNOWN: ps could not be read after the run"]
     if not seen:
-        return [f"tree       it ended before the first poll ({POLL_NOTE})"]
+        return [f"tree       nothing of it was running at any look ({POLL_NOTE})"]
     lines = [
         f"tree       {len(seen)} processes seen while it ran "
         f"({POLL_NOTE}; root pid {outcome.root_pid})"
@@ -270,7 +285,8 @@ def describe_processes(outcome: ProcessOutcome, *, group_only: bool) -> list[str
         lines.append(f"reaped     group {outcome.root_pid} killed, and nothing else")
     else:
         lines.append(
-            f"reaped     group {outcome.root_pid} killed, then 2 sweeps signalled "
+            f"reaped     group {outcome.root_pid} killed, then {REAP_PASSES} "
+            "sweeps signalled "
             f"{count} {'process' if count == 1 else 'processes'} "
             "(the tree, every group it used, the marker)"
         )
@@ -334,10 +350,27 @@ def main() -> None:
     for line in describe_processes(outcome, group_only=args.group_only):
         print(line)
     if outcome.survivors:
-        kill_survivors(outcome.survivors)
-        left = still_alive({pid: outcome.seen[pid] for pid in outcome.survivors})
+        rows = {pid: outcome.seen[pid] for pid in outcome.survivors}
+        kill_survivors(rows)
+        left = still_alive(rows)
         print(f"cleanup    the runner killed them now; {len(left)} still running")
-    sys.exit(EXIT_TIMED_OUT if outcome.timed_out else outcome.exit_code or 0)
+    sys.exit(exit_status(outcome))
+
+
+def exit_status(outcome: ProcessOutcome) -> int:
+    """Turn an outcome into the runner's own exit status, the way a shell does.
+
+    Args:
+        outcome: The run's outcome.
+
+    Returns:
+        124 after a timeout, 128 + N for a death by signal N, else the code.
+    """
+    if outcome.timed_out or outcome.exit_code is None:
+        return EXIT_TIMED_OUT
+    if outcome.exit_code < 0:
+        return EXIT_SIGNAL_BASE - outcome.exit_code
+    return outcome.exit_code
 
 
 if __name__ == "__main__":

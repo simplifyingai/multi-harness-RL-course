@@ -128,12 +128,13 @@ def test_writable_root_refuses_broad_and_secret_folders(tmp_path: Path) -> None:
     assert sandbox.check_writable_root(work, home) == work.resolve()
 
 
-def test_hidden_root_refuses_an_ancestor_of_the_task_folder(tmp_path: Path) -> None:
+def test_hidden_root_refuses_to_overlap_a_writable_folder(tmp_path: Path) -> None:
     work = (tmp_path / "rollouts" / "r1").resolve()
-    work.mkdir(parents=True)
-    with pytest.raises(sandbox.UnsafeSandboxPathError):
-        sandbox.check_hidden_root(work.parent, work)
-    assert sandbox.check_hidden_root(tasks.DATA_DIR, work) == tasks.DATA_DIR
+    (work / "gold").mkdir(parents=True)
+    for hidden in (work.parent, work / "gold"):
+        with pytest.raises(sandbox.UnsafeSandboxPathError):
+            sandbox.check_hidden_root(hidden, [work])
+    assert sandbox.check_hidden_root(tasks.DATA_DIR, [work]) == tasks.DATA_DIR
 
 
 def test_params_anchor_every_regex_on_the_escaped_home(tmp_path: Path) -> None:
@@ -193,12 +194,65 @@ def test_timeout_reaps_the_whole_tree(tmp_path: Path) -> None:
         cwd=tmp_path,
         env={"PATH": "/usr/bin:/bin"},
         log_path=tmp_path / "log.txt",
-        timeout_s=1.5,
+        timeout_s=3,
     )
     assert outcome.timed_out
     assert outcome.exit_code is None
     assert len(outcome.seen) == 3
     assert not outcome.survivors
+    assert not outcome.ps_failed
+    assert not process.still_alive(outcome.seen, wait=False)
+
+
+def fake_table(
+    monkeypatch: pytest.MonkeyPatch, rows: list[process.ProcessInfo], marked: set[int]
+) -> list[int]:
+    """Replace ps and kill with fakes, and record which pids get killed.
+
+    Args:
+        monkeypatch: pytest's patcher.
+        rows: The process table ps will report.
+        marked: Pids whose environment carries the marker.
+
+    Returns:
+        The list the fake kill appends to.
+    """
+    killed: list[int] = []
+    monkeypatch.setattr(process, "process_table", lambda: rows)
+    monkeypatch.setattr(process, "processes_with_marker", lambda marker: marked)
+    monkeypatch.setattr(process, "_kill_group", lambda pgid: None)
+    monkeypatch.setattr(process, "_kill", lambda pid: killed.append(pid) or True)
+    return killed
+
+
+def test_sweeps_never_signal_a_process_older_than_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_start = 1_000_000.0
+    old = run_start - 60
+    rows = [
+        process.ProcessInfo(10, 1, 10, run_start, "bash"),  # the root
+        process.ProcessInfo(11, 10, 10, run_start, "sleep"),  # its child
+        process.ProcessInfo(12, 1, 10, old, "old"),  # recycled into the group
+        process.ProcessInfo(13, 1, 13, run_start + 1, "node"),  # marked orphan
+        process.ProcessInfo(14, 1, 14, old, "older"),  # marked, but too old
+    ]
+    killed = fake_table(monkeypatch, rows, marked={13, 14})
+    signalled = process.kill_tree(
+        10, {10}, run_start, root_reaped=True, marker="MHRL_RUN_ID=x"
+    )
+    assert signalled == {10, 11, 13}
+    assert set(killed) == {10, 11, 13}
+
+
+def test_marked_orphans_are_reported_as_survivors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [process.ProcessInfo(13, 1, 13, 100.0, "node")]
+    fake_table(monkeypatch, rows, marked={13})
+    assert set(process.marked("MHRL_RUN_ID=x", cutoff=50.0)) == {13}
+    assert process.marked("MHRL_RUN_ID=x", cutoff=150.0) == {}
+    assert process.marked(None, cutoff=0.0) == {}
 
 
 def test_group_only_misses_a_child_that_left_the_group(tmp_path: Path) -> None:
@@ -217,7 +271,7 @@ def test_group_only_misses_a_child_that_left_the_group(tmp_path: Path) -> None:
         names = {outcome.seen[pid].name for pid in outcome.survivors}
         assert names == {"perl"}
     finally:
-        process.kill_survivors(outcome.survivors)
+        process.kill_survivors({pid: outcome.seen[pid] for pid in outcome.survivors})
     assert not process.still_alive(outcome.seen)
 
 
@@ -278,6 +332,26 @@ def test_grade_safe_refuses_a_link_the_naive_grader_follows(tmp_path: Path) -> N
     assert grade.reason == grader.REASON_NOT_REGULAR
 
 
+def test_grade_safe_refuses_a_hard_link(tmp_path: Path) -> None:
+    target = tmp_path / "elsewhere.txt"
+    target.write_text("30\n")
+    work = tmp_path / "work"
+    work.mkdir()
+    os.link(target, work / "answer.txt")
+    task = tasks.load_task()
+    assert grade_safe.grade_naive(task, work).correct
+    grade = grade_safe.grade_safe(task, work)
+    assert grade.submitted is None
+    assert grade.reason == grade_safe.REASON_HARD_LINK
+
+
+def test_grade_safe_says_when_it_read_only_part_of_a_file(tmp_path: Path) -> None:
+    (tmp_path / "answer.txt").write_text("30\n" + "x" * grader.MAX_ANSWER_BYTES)
+    grade = grade_safe.grade_safe(tasks.load_task(), tmp_path)
+    assert grade.correct
+    assert f"only the first {grader.MAX_ANSWER_BYTES} of" in grade.reason
+
+
 def test_grade_safe_does_not_wait_on_a_named_pipe(tmp_path: Path) -> None:
     os.mkfifo(tmp_path / "answer.txt")
     started = time.monotonic()
@@ -321,10 +395,46 @@ def test_a_rollout_gets_a_clean_environment(course_home: Path) -> None:
     assert rollout.fake_home.is_dir() and rollout.tmp.is_dir()
 
 
+def test_a_rollout_name_must_be_a_plain_folder_name(course_home: Path) -> None:
+    for name in ("..", "a/b", "../../x", "."):
+        with pytest.raises(ValueError):
+            runner.new_rollout(name)
+
+
+def test_exit_status_is_a_shells() -> None:
+    def outcome(code: int | None, timed_out: bool = False) -> process.ProcessOutcome:
+        return process.ProcessOutcome(code, 0.0, timed_out, root_pid=1)
+
+    assert runner.exit_status(outcome(None, timed_out=True)) == 124
+    assert runner.exit_status(outcome(-9)) == 137
+    assert runner.exit_status(outcome(3)) == 3
+
+
 def test_attempt_expectations_differ_only_where_v1_does() -> None:
-    attempt = attacks.Attempt("x", "true", attacks.ALLOWED, expect_v1=attacks.DENIED)
-    assert attempt.expected(sandbox.PROJECT_PROFILE) == attacks.ALLOWED
-    assert attempt.expected(sandbox.V1_PROFILE) == attacks.DENIED
+    allowed, denied = attacks.Outcome.ALLOWED, attacks.Outcome.DENIED
+    attempt = attacks.Attempt("x", "true", allowed, expect_v1=denied)
+    assert attempt.expected(sandbox.PROJECT_PROFILE) == allowed
+    assert attempt.expected(sandbox.V1_PROFILE) == denied
+
+
+@pytest.mark.parametrize(
+    ("code", "timed_out", "output", "exists", "outcome"),
+    [
+        (0, False, "", True, attacks.Outcome.ALLOWED),
+        (1, False, "cat: x: Operation not permitted", True, attacks.Outcome.DENIED),
+        (1, False, "cat: x: No such file or directory", True, "inconclusive"),
+        (1, False, "cat: x: Operation not permitted", False, "inconclusive"),
+        (127, False, "bash: cat: command not found", True, "inconclusive"),
+        (None, True, "", True, "inconclusive"),
+    ],
+)
+def test_a_denial_needs_proof(
+    code: int | None, timed_out: bool, output: str, exists: bool, outcome: str
+) -> None:
+    attempt = attacks.Attempt("x", "cat x", attacks.Outcome.DENIED)
+    run = process.ProcessOutcome(code, 0.0, timed_out, root_pid=1)
+    outside = attacks.Outside("present" if exists else "absent", exists)
+    assert attacks.classify(attempt, run, output, outside)[0] == outcome
 
 
 # ---------------------------------------------------------------- live box
@@ -365,6 +475,7 @@ def test_box_hides_the_decoy_secrets_and_gold_answers(course_home: Path) -> None
     for path in found.files().values():
         code, output = run(rollout, attacks.read_probe(path))
         assert code != 0, path
+        assert attacks.EPERM_TEXT in output.lower()
         assert decoys.DECOY_TEXT.strip() not in output
 
 
@@ -389,7 +500,7 @@ def test_a_readable_decoy_stops_before_any_real_path(
     broken = tmp_path / "broken.sb"
     broken.write_text("(version 1)\n(allow default)\n")
     monkeypatch.setitem(sandbox.PROFILES, sandbox.PROJECT_PROFILE, broken)
-    assert attacks.run_all(sandbox.PROJECT_PROFILE, []) == attacks.EXIT_DECOY_READABLE
+    assert attacks.run_all(sandbox.PROJECT_PROFILE, []) == attacks.EXIT_DECOY_FAILED
     rollouts = tasks.chapter_home() / tasks.ROLLOUTS_DIR
     assert sorted(path.name for path in rollouts.iterdir()) == [attacks.DECOY_ROLLOUT]
     shutil.rmtree(rollouts)

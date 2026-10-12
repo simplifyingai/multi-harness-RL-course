@@ -4,7 +4,7 @@
 # ///
 """Grade answer.txt without following links: the grader runs OUTSIDE the box.
 
-``uv run grade_safe.py``         the demo: three answer.txt files made by the box
+``uv run grade_safe.py``         the demo: four answer.txt files made by the box
 ``uv run grade_safe.py FOLDER``  grade one task folder
 
 The grader has to read the gold answers, so it runs outside the box, where
@@ -17,7 +17,10 @@ So the safe grader opens ``answer.txt`` like the project's
 ``mhrl/tasks/core.py`` does: ``O_NOFOLLOW`` (a link is refused, atomically,
 with no gap between a check and the open), ``O_NONBLOCK`` (a named pipe
 cannot make it wait forever), then ``fstat`` to accept only a regular file,
-and at most 64 KiB is read.
+and at most 64 KiB is read. A hard link is a second NAME for the same file, so
+``O_NOFOLLOW`` cannot see it; the box already refuses to make one to a file it
+may not read (the demo shows it), and the grader also refuses any answer.txt
+with more than one name.
 
 The demo's "secret" is the decoy ``.env`` (``decoys.py``), never a real file.
 """
@@ -30,6 +33,7 @@ import os
 import shlex
 import stat
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from decoys import make_decoys
@@ -46,6 +50,12 @@ from runner import new_rollout, run_in_box
 from tasks import ANSWER_FILE, Task, load_task, show
 
 ANSWER_OPEN_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+# open() errors that mean "this is not a plain file": a link (ELOOP, from
+# O_NOFOLLOW on the last part of the path) or a socket (ENXIO).
+NOT_A_FILE_ERRORS = (errno.ELOOP, errno.ENXIO)
+# A plain file has one name. A second one (a hard link) could be a secret's.
+SINGLE_LINK = 1
+REASON_HARD_LINK = f"{ANSWER_FILE} has another name elsewhere (a hard link)"
 COMMAND_TIMEOUT_S = 30.0
 NAIVE = "naive grader (opens the path)"
 SAFE = "safe grader  (O_NOFOLLOW)"
@@ -64,7 +74,7 @@ def _read_prefix(descriptor: int, limit: int) -> bytes:
     Raises:
         OSError: If reading fails.
     """
-    chunks = []
+    chunks: list[bytes] = []
     remaining = limit
     while remaining > 0:
         chunk = os.read(descriptor, remaining)
@@ -85,7 +95,9 @@ def grade_safe(task: Task, workdir: Path) -> Grade:
     Returns:
         The grade. A missing file is wrong with ``"no answer.txt"``; a link, a
         folder, a named pipe or anything else that is not a regular file is
-        wrong with ``"answer.txt is not a regular file"``, and is never read.
+        wrong with ``"answer.txt is not a regular file"``, and so is a file
+        with a second name (a hard link); none of them is read. Only the first
+        64 KiB is graded, and the reason says so when there was more.
     """
     path = workdir / ANSWER_FILE
     try:
@@ -94,17 +106,27 @@ def grade_safe(task: Task, workdir: Path) -> Grade:
         return Grade(correct=False, submitted=None, reason=REASON_NO_ANSWER)
     except OSError as exc:
         # O_NOFOLLOW refuses a link with ELOOP: the link is never followed.
-        reason = REASON_NOT_REGULAR if exc.errno == errno.ELOOP else REASON_UNREADABLE
+        not_a_file = exc.errno in NOT_A_FILE_ERRORS
+        reason = REASON_NOT_REGULAR if not_a_file else REASON_UNREADABLE
         return Grade(correct=False, submitted=None, reason=reason)
     try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        # fstat looks at the file that was opened, so nothing can be swapped
+        # in between a check and the read.
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
             return Grade(correct=False, submitted=None, reason=REASON_NOT_REGULAR)
+        if info.st_nlink > SINGLE_LINK:
+            return Grade(correct=False, submitted=None, reason=REASON_HARD_LINK)
         raw = _read_prefix(descriptor, MAX_ANSWER_BYTES)
     except OSError:
         return Grade(correct=False, submitted=None, reason=REASON_UNREADABLE)
     finally:
         os.close(descriptor)
-    return check_answer(task, raw.decode(ANSWER_ENCODING, errors="replace"))
+    grade = check_answer(task, raw.decode(ANSWER_ENCODING, errors="replace"))
+    if info.st_size > MAX_ANSWER_BYTES:
+        note = f" (only the first {MAX_ANSWER_BYTES} of {info.st_size} bytes read)"
+        grade = replace(grade, reason=grade.reason + note)
+    return grade
 
 
 def grade_naive(task: Task, workdir: Path) -> Grade:
@@ -143,7 +165,7 @@ def describe(grade: Grade) -> str:
 
 
 def demo() -> None:
-    """Let the box make three answer.txt files, then grade each one both ways."""
+    """Let the box make four answer.txt files, then grade each one both ways."""
     task = load_task()
     decoys = make_decoys()
     secret = decoys.dot_env
@@ -155,6 +177,7 @@ def demo() -> None:
             f"cat {ANSWER_FILE} >/dev/null",
             True,
         ),
+        ("hardlink", f"ln {shlex.quote(str(secret))} {ANSWER_FILE}", True),
         ("pipe", f"mkfifo {ANSWER_FILE}", False),
     ]
     print(f"task      {task.question} (gold answer {task.answer})")

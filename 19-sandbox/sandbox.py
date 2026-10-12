@@ -20,7 +20,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from tasks import DATA_DIR, chapter_home, real_home, show
+from tasks import DATA_DIR, ROLLOUTS_DIR, STATE_DIR, chapter_home, real_home, show
 
 HERE = Path(__file__).resolve().parent
 SANDBOX_EXEC = Path("/usr/bin/sandbox-exec")
@@ -45,6 +45,7 @@ TASKS_DIR_PARAM = "TASKS_DIR"
 RUNS_DIR_PARAM = "RUNS_DIR"
 SYSTEM_TMP_PARAM = "SYSTEM_TMP"
 SYSTEM_TMP_ON = "1"
+EXAMPLE_ROLLOUT = "example"
 
 # Secret-file patterns, appended to the escaped home folder:
 # .env, .envrc, name.env, each with optional suffixes (.env.local); not .venv.
@@ -79,6 +80,8 @@ CREDENTIAL_PATHS = (
 )
 
 
+# The chapter's own exception root (the course is standard library only, so
+# there is no application-wide base class to inherit from).
 class SandboxError(Exception):
     """Base class for every reason the box will not run a command."""
 
@@ -140,28 +143,36 @@ def check_writable_root(path: Path, home: Path) -> Path:
     return resolved
 
 
-def check_hidden_root(path: Path, workdir: Path) -> Path:
-    """Resolve a folder the box will hide, refusing an ancestor of the workdir.
+def check_hidden_root(path: Path, writable: Sequence[Path]) -> Path:
+    """Resolve a folder the box will hide, refusing one that overlaps a writable one.
 
     Hiding a folder above the task folder makes every path through it
     unreadable: that is exactly the first profile's bug (``sandbox_v1.sb``).
+    A hidden folder INSIDE a writable one would not be hidden at all, because
+    the profile re-allows reads in the writable folders after the deny.
 
     Args:
         path: A folder the profile denies reading.
-        workdir: The resolved task folder.
+        writable: The resolved task folder and state folder.
 
     Returns:
         The resolved path.
 
     Raises:
-        UnsafeSandboxPathError: If the folder contains the task folder.
+        UnsafeSandboxPathError: If the folder contains, or sits inside, a
+            writable folder.
     """
     resolved = path.resolve()
-    if workdir.is_relative_to(resolved):
-        raise UnsafeSandboxPathError(
-            f"{resolved} contains the task folder {workdir}; hiding it would "
-            "break every tool that resolves paths through it"
-        )
+    for folder in writable:
+        if folder.is_relative_to(resolved):
+            raise UnsafeSandboxPathError(
+                f"{resolved} contains {folder}; hiding it would break every "
+                "tool that resolves paths through it"
+            )
+        if resolved.is_relative_to(folder):
+            raise UnsafeSandboxPathError(
+                f"{resolved} is inside {folder}, where reads are allowed again"
+            )
     return resolved
 
 
@@ -191,19 +202,22 @@ def sandbox_params(
 
     Raises:
         UnsafeSandboxPathError: If a writable folder is too broad, or the tasks
-            folder contains the task folder.
+            folder overlaps a writable folder.
     """
     protected = (home or real_home()).resolve()
     escaped = regex_escape(str(protected))
-    resolved_workdir = check_writable_root(workdir, protected)
+    writable = [
+        check_writable_root(workdir, protected),
+        check_writable_root(state_dir, protected),
+    ]
     params = {
-        WORKDIR_PARAM: str(resolved_workdir),
-        STATE_DIR_PARAM: str(check_writable_root(state_dir, protected)),
+        WORKDIR_PARAM: str(writable[0]),
+        STATE_DIR_PARAM: str(writable[1]),
         HOME_DIR_PARAM: str(protected),
         ENV_FILE_REGEX_PARAM: f"^{escaped}{ENV_FILE_PATTERN}",
         CLAUDE_JSON_REGEX_PARAM: f"^{escaped}{CLAUDE_JSON_PATTERN}",
         CLAUDE_CREDS_REGEX_PARAM: f"^{escaped}{CLAUDE_CREDS_PATTERN}",
-        TASKS_DIR_PARAM: str(check_hidden_root(tasks_dir, resolved_workdir)),
+        TASKS_DIR_PARAM: str(check_hidden_root(tasks_dir, writable)),
         # Not checked: the first profile hides it although it IS an ancestor.
         RUNS_DIR_PARAM: str(runs_dir.resolve()),
     }
@@ -263,8 +277,8 @@ def sandbox_command(
 def main() -> None:
     """Print the command a rollout would run, one parameter per line."""
     home = chapter_home()
-    example = home / "rollouts" / "example"
-    state = home / "state" / "example"
+    example = home / ROLLOUTS_DIR / EXAMPLE_ROLLOUT
+    state = home / STATE_DIR / EXAMPLE_ROLLOUT
     example.mkdir(parents=True, exist_ok=True)
     state.mkdir(parents=True, exist_ok=True)
     params = sandbox_params(workdir=example, state_dir=state, runs_dir=example.parent)

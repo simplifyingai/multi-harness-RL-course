@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
 """Chapter 1's answer check: a program, not an AI, decides whether an answer is right.
 
 A copy of the project's ``mhrl/tasks/core.py`` answer check (``check_answer``),
@@ -184,7 +188,7 @@ def list_items(text: str) -> set[str]:
     Returns:
         The items, ignoring order, bullets, numbering and a final "and".
     """
-    items = set()
+    items: set[str] = set()
     for part in LIST_SEPARATOR_RE.split(clean(text).strip(LIST_BRACKETS)):
         item = clean(part)
         if not item or FENCE_RE.match(item):

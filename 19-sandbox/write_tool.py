@@ -38,6 +38,11 @@ MISSING_ERRORS = (errno.ENOENT, errno.ENOTDIR)
 EXIT_FAILED = 1
 USAGE = "usage: python write_tool.py PATH CONTENT"
 ARGS_EXPECTED = 3
+# The system call each step makes, as Node names it in an error.
+STEP_REALPATH = "realpath"
+STEP_MKDIR = "mkdir"
+STEP_OPEN = "open"
+TEXT_ENCODING = "utf-8"
 
 
 def realpath_c(path: str) -> str:
@@ -137,15 +142,15 @@ def write(path: str, content: str) -> str:
     try:
         queue_key(str(absolute))
     except OSError as exc:
-        raise ToolError("realpath", exc) from exc
+        raise ToolError(STEP_REALPATH, exc) from exc
     try:
         absolute.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        raise ToolError("mkdir", exc) from exc
+        raise ToolError(STEP_MKDIR, exc) from exc
     try:
-        absolute.write_text(content, encoding="utf-8")
+        absolute.write_text(content, encoding=TEXT_ENCODING)
     except OSError as exc:
-        raise ToolError("open", exc) from exc
+        raise ToolError(STEP_OPEN, exc) from exc
     return f"Successfully wrote to {path}"
 
 

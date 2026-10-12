@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from tasks import DECOYS_DIR, TASK_FILE, chapter_home, show
+from tasks import DECOYS_DIR, TASK_FILE, TEXT_ENCODING, chapter_home, show
 
 DECOY_TEXT = "decoy for chapter 19: not a real secret\n"
 DECOY_HOME_DIR = "home"
@@ -79,7 +79,7 @@ def make_decoys() -> Decoys:
     decoys = Decoys(root / DECOY_HOME_DIR, root / DECOY_TASKS_DIR)
     for path in decoys.files().values():
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(DECOY_TEXT, encoding="utf-8")
+        path.write_text(DECOY_TEXT, encoding=TEXT_ENCODING)
     return decoys
 
 
