@@ -814,6 +814,28 @@ def test_the_engine_refuses_a_busy_port_before_loading_the_model(
             engine.main()
 
 
+def test_the_engine_says_when_it_is_ready_and_what_it_held(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    scripted = FakeModel([])
+    scripted.seconds = 1.1
+    fake_lfm = ModuleType("lfm")
+    fake_lfm.LfmModel = lambda folder, seed: scripted
+    fake_lfm.active_memory = lambda: 1_600_000_000
+    fake_lfm.peak_memory = lambda: 2_570_000_000
+    monkeypatch.setitem(sys.modules, "lfm", fake_lfm)
+    monkeypatch.setattr(engine, "pick_model", lambda fast: (tmp_path, "scripted"))
+    served = []
+    monkeypatch.setattr(engine, "serve", lambda app, sock: served.append(sock))
+    monkeypatch.setattr(sys, "argv", ["engine.py", "--port", "0"])
+    engine.main()
+    served[0].close()
+    out = capsys.readouterr().out
+    assert "engine ready · lfm2.5-2.6b 4-bit · 127.0.0.1:" in out
+    assert " · 1.6 GB" in out and "(scripted), loaded in 1.1 s" in out
+    assert "engine stopped · 0 requests · peak memory 2.57 GB" in out
+
+
 # ------------------------------------------------------------------ drift
 
 
@@ -875,6 +897,7 @@ def test_drift_runs_end_to_end_on_a_scripted_model(
     scripted.seconds = 0.0
     fake_lfm = ModuleType("lfm")
     fake_lfm.LfmModel = lambda folder, seed: scripted
+    fake_lfm.peak_memory = lambda: 2_570_000_000
     monkeypatch.setitem(sys.modules, "lfm", fake_lfm)
     monkeypatch.setattr(drift, "pick_model", lambda fast: (tmp_path, "scripted"))
     drift.run_live(fast=False)
@@ -886,6 +909,7 @@ def test_drift_runs_end_to_end_on_a_scripted_model(
     assert "4. cause 2, the re-written tool call" in out
     assert "in the tool-call span" in out
     assert "continues the previous call: yes" in out
+    assert "peak memory: 2.57 GB, the weights included" in out
 
 
 def test_the_recorded_replies_are_bundled_whole() -> None:

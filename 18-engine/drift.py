@@ -81,6 +81,7 @@ STAND_IN = "(a recorded reply follows; the project's prompt is not bundled)"
 NOT_RERUN = "(the recorded tool result is not bundled)"
 REASONING = "reasoning_content"  # where OpenAI-style APIs put a reply's reasoning
 INDENT = "  "
+GIGABYTE = 1_000_000_000  # 10**9 bytes, as MLX and the Hub count
 
 
 @dataclass(frozen=True)
@@ -267,7 +268,7 @@ def run_live(fast: bool) -> None:
     Args:
         fast: Use Liquid's export of the model.
     """
-    from lfm import LfmModel  # MLX loads here, so the rest runs without it
+    from lfm import LfmModel, peak_memory  # MLX loads here, not before
 
     folder, which = pick_model(fast)
     model = LfmModel(folder, SAMPLE_SEED)
@@ -314,6 +315,7 @@ def run_live(fast: bool) -> None:
     print(f"{INDENT}continues the previous call: {'yes' if kept else 'no'}")
     if not kept:
         print_lines(describe(model, compare(chain, restored, start), chain, restored))
+    print(f"\npeak memory: {peak_memory() / GIGABYTE:.2f} GB, the weights included")
 
 
 def load_recorded(path: Path = RECORDED_FILE) -> list[Recorded]:

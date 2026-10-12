@@ -778,7 +778,7 @@ def main() -> None:
     """Load the model and serve it on 127.0.0.1."""
     args = parse_args()
     sock = claim_port(args.port)
-    from lfm import LfmModel, active_memory  # MLX loads here, so the rest runs without
+    from lfm import LfmModel, active_memory, peak_memory  # MLX loads here only
 
     folder, which = pick_model(args.fast)
     model = LfmModel(folder, args.seed)
@@ -787,7 +787,13 @@ def main() -> None:
     print(f"engine ready · {SERVED_MODEL} 4-bit · {HOST}:{port} · {memory:.1f} GB")
     print(f"  {short_path(folder)} ({which}), loaded in {model.seconds:.1f} s")
     print("  one worker thread; each request prints a line here", flush=True)
-    serve(create_app(Engine(model)), sock)
+    engine = Engine(model)
+    serve(create_app(engine), sock)
+    print(
+        f"engine stopped · {engine.stats.requests} requests · peak memory "
+        f"{peak_memory() / GIGABYTE:.2f} GB, the weights included",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
