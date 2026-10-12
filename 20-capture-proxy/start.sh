@@ -206,7 +206,10 @@ stop_one() {  # name
   fi
   local pid waited=0
   pid=$(cat "$RUN/$1.pid")
-  kill -INT -- "-$pid" 2>/dev/null || true  # Ctrl-C, to the whole group
+  # Ctrl-C to the group's leader only: uv passes it on to the engine's Python
+  # (and the proxy IS its leader). Sent to the whole group, the engine would
+  # get it twice, the second time while it shuts down.
+  kill -INT "$pid" 2>/dev/null || true
   # Wait for the whole group (uv and its Python), not just its leader.
   while kill -0 -- "-$pid" 2>/dev/null && [ "$waited" -lt "$STOP_WAIT_S" ]; do
     sleep 1
