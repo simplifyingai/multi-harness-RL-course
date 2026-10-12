@@ -85,6 +85,7 @@ UNREADABLE_NOTE = (
 WHY_CUT_OFF = "it was cut off by the length cap"
 WHY_EMPTY = "it held no tool call and no text"
 NO_SUCH_TOOL = "Error: No such tool available: {name}"
+CASE_HINT = ". Tool names are case-sensitive: call {offered} instead."
 NO_COMMAND = "Error: the tool needs a command, as text"
 BAD_ARGUMENTS = "Error: the tool call's arguments are not a JSON object"
 STOP_NO_CALL = "no tool call: the reply is the model's final answer"
@@ -253,6 +254,21 @@ def start_messages(task: Task) -> list[dict[str, Any]]:
     ]
 
 
+def no_such_tool(name: str, offered: list[str]) -> str:
+    """Say a tool does not exist, in Claude Code's words (chapter 17's).
+
+    Args:
+        name: The tool the model called.
+        offered: The names of the tools offered.
+
+    Returns:
+        The error, with a hint when only the letter case is wrong.
+    """
+    message = NO_SUCH_TOOL.format(name=name)
+    same = [tool for tool in offered if tool.lower() == str(name).lower()]
+    return message + CASE_HINT.format(offered=same[0]) if same else message
+
+
 def execute(
     call: dict[str, Any], tools: list[dict[str, Any]], workdir: Path
 ) -> ToolResult:
@@ -270,7 +286,7 @@ def execute(
     name = function.get("name")
     offered = [tool["function"]["name"] for tool in tools]
     if name not in offered:  # an exact match: names are case-sensitive
-        return ToolResult(NO_SUCH_TOOL.format(name=name), ok=False)
+        return ToolResult(no_such_tool(name, offered), ok=False)
     try:
         arguments = json.loads(function.get("arguments") or "{}")
     except json.JSONDecodeError:

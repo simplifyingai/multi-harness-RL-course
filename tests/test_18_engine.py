@@ -1011,7 +1011,9 @@ def test_the_http_harness_stops_after_three_unreadable_replies() -> None:
 def test_the_http_harness_refuses_a_tool_it_did_not_offer(tmp_path: Path) -> None:
     call = {"id": "c", "function": {"name": "Bash", "arguments": '{"command": "ls"}'}}
     result = tiny_harness_http.execute(call, TOOLS, tmp_path)
-    assert result.output == "Error: No such tool available: Bash" and not result.ok
+    hint = ". Tool names are case-sensitive: call bash instead."
+    assert result.output == "Error: No such tool available: Bash" + hint
+    assert not result.ok
     call["function"] = {"name": "bash", "arguments": "{oops"}
     assert tiny_harness_http.execute(call, TOOLS, tmp_path).output.startswith(
         "Error: the tool call's arguments"
