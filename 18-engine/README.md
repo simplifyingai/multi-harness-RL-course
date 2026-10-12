@@ -5,8 +5,9 @@ read every token the model wrote. Real harnesses are separate programs.
 mini-swe-agent, Pi and Claude Code reach a model over HTTP, with nothing but
 an address and a key, and they get back only what the API hands them. This
 chapter puts our model behind such an API: a small server, the **engine**,
-that answers in OpenAI's chat format, so any of those harnesses could use it,
-and that also returns what hosted APIs never give back, the exact tokens.
+that answers in OpenAI's chat format (mini-swe-agent and Pi speak it as it
+is; Claude Code reaches it through chapter 20's translation), and that also
+returns what hosted APIs never give back, the exact tokens.
 
 The puzzle to keep in mind: on every call a harness sends the whole
 conversation again, the model's earlier replies included. But it sends its
