@@ -814,8 +814,12 @@ def test_the_engine_refuses_a_busy_port_before_loading_the_model(
             engine.main()
 
 
+@pytest.mark.parametrize("stopped_by_ctrl_c", [False, True])
 def test_the_engine_says_when_it_is_ready_and_what_it_held(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    stopped_by_ctrl_c: bool,
 ) -> None:
     scripted = FakeModel([])
     scripted.seconds = 1.1
@@ -826,7 +830,14 @@ def test_the_engine_says_when_it_is_ready_and_what_it_held(
     monkeypatch.setitem(sys.modules, "lfm", fake_lfm)
     monkeypatch.setattr(engine, "pick_model", lambda fast: (tmp_path, "scripted"))
     served = []
-    monkeypatch.setattr(engine, "serve", lambda app, sock: served.append(sock))
+
+    def serve(app: Any, sock: socket.socket) -> None:
+        """Serve nothing; stop as Ctrl-C stops uvicorn, if asked."""
+        served.append(sock)
+        if stopped_by_ctrl_c:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(engine, "serve", serve)
     monkeypatch.setattr(sys, "argv", ["engine.py", "--port", "0"])
     engine.main()
     served[0].close()

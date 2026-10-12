@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import errno
 import json
 import math
@@ -788,7 +789,8 @@ def main() -> None:
     print(f"  {short_path(folder)} ({which}), loaded in {model.seconds:.1f} s")
     print("  one worker thread; each request prints a line here", flush=True)
     engine = Engine(model)
-    serve(create_app(engine), sock)
+    with contextlib.suppress(KeyboardInterrupt):  # Ctrl-C: how a server is stopped
+        serve(create_app(engine), sock)
     print(
         f"engine stopped · {engine.stats.requests} requests · peak memory "
         f"{peak_memory() / GIGABYTE:.2f} GB, the weights included",
