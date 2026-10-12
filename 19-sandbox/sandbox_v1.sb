@@ -1,0 +1,87 @@
+(version 1)
+
+;; The FIRST, too-strict version of the box. Do not use it.
+;;
+;; It is sandbox.sb plus one rule: it also hides RUNS_DIR, the folder that
+;; holds every rollout's task folder, so that no rollout could read another
+;; rollout's folder. The task folder itself is re-allowed below, so it looks
+;; harmless. But every folder ABOVE the task folder is now unreadable, and
+;; programs that resolve a path by walking up through those folders fail
+;; with "Operation not permitted". In the project this broke Pi's write tool
+;; silently: every answer.txt write failed, and Pi scored 0% after SFT and
+;; RL until the rule was removed (38% on re-evaluation).
+;;
+;; Parameters: the same as sandbox.sb, plus
+;;
+;;   RUNS_DIR            the folder holding every rollout's task folder
+;;
+;; Seatbelt applies the LAST rule that matches, so the order below matters.
+
+;; Start permissive: harnesses are large programs (Node, Bun, Python) that
+;; read all over the system, spawn shells and talk to system daemons.
+(allow default)
+
+;; ---------------------------------------------------------------- writes
+;; Only the task folder, the private state folder and /dev (null, tty, fd).
+;; Not your home, not this repository, not ~/.claude.
+(deny file-write*)
+(allow file-write*
+    (subpath (param "WORKDIR"))
+    (subpath (param "STATE_DIR"))
+    (subpath "/dev"))
+
+(if (equal? (param "SYSTEM_TMP") "1")
+    (allow file-write*
+        (subpath "/private/tmp")
+        (subpath "/private/var/tmp")
+        (subpath "/private/var/folders")))
+
+;; ---------------------------------------------------------------- secrets
+;; Reads stay open (programs, libraries, system files), except credentials.
+;; file-read* also covers stat, so `test -e` says these do not exist.
+(deny file-read*
+    (subpath (string-append (param "HOME_DIR") "/.ssh"))
+    (subpath (string-append (param "HOME_DIR") "/.aws"))
+    (subpath (string-append (param "HOME_DIR") "/.config/gh"))
+    (subpath (string-append (param "HOME_DIR") "/.config/gcloud"))
+    (subpath (string-append (param "HOME_DIR") "/.azure"))
+    (subpath (string-append (param "HOME_DIR") "/.gnupg"))
+    (subpath (string-append (param "HOME_DIR") "/.docker"))
+    (subpath (string-append (param "HOME_DIR") "/.kube"))
+    (subpath (string-append (param "HOME_DIR") "/Library/Keychains"))
+    (literal (string-append (param "HOME_DIR") "/.netrc"))
+    (literal (string-append (param "HOME_DIR") "/.npmrc"))
+    (literal (string-append (param "HOME_DIR") "/.pypirc"))
+    (literal (string-append (param "HOME_DIR") "/.git-credentials"))
+    (literal (string-append (param "HOME_DIR") "/.cache/huggingface/token"))
+    (literal (string-append (param "HOME_DIR") "/.huggingface/token"))
+    (regex (param "CLAUDE_JSON_REGEX"))
+    (regex (param "CLAUDE_CREDS_REGEX"))
+    (regex (param "ENV_FILE_REGEX")))
+
+;; ---------------------------------------------------------------- answers
+;; The task files hold the gold answers: reading them would be reward
+;; hacking, and RL is good at finding shortcuts. TASKS_DIR is never an
+;; ancestor of a task folder (sandbox.py checks), so denying it whole costs
+;; nothing. RUNS_DIR is the mistake: it IS an ancestor of every task folder
+;; (see the header).
+(deny file-read*
+    (subpath (param "TASKS_DIR"))
+    (subpath (param "RUNS_DIR")))
+
+;; ...but the rollout's own folders stay fully readable, .env files included.
+(allow file-read*
+    (subpath (param "WORKDIR"))
+    (subpath (param "STATE_DIR")))
+
+;; The login keychain is unlocked while you are logged in, and Claude Code
+;; keeps its login token there, so `security find-generic-password -w` could
+;; print it. Nothing in the box needs the keychain.
+(deny mach-lookup (global-name "com.apple.SecurityServer"))
+
+;; ---------------------------------------------------------------- network
+;; Outbound only to loopback, where the course's local servers listen. DNS
+;; (mDNSResponder's unix socket) is outbound too, so external names do not
+;; even resolve, and a connect() to an external address fails.
+(deny network-outbound)
+(allow network-outbound (remote ip "localhost:*"))
