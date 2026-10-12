@@ -58,6 +58,8 @@ case "$setup" in ours | yours | bare) ;; *) echo "--setup is ours, yours or bare
 if [ -z "$folder" ]; then
   if [ "$setup" = "yours" ]; then folder="extras"; else folder="plain"; fi
 fi
+# "yours" passes no settings, so Claude Code's own Bash output limit applies.
+if [ "$setup" = "yours" ]; then bash_max="default"; fi
 case "$folder" in plain | extras) ;; *) echo "--folder is plain or extras" >&2; exit 2 ;; esac
 name="${name:-$script}"
 
