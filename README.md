@@ -72,7 +72,7 @@ About 258 minutes of video in 29 chapters.
 
 | # | chapter | minutes | status |
 | ---: | --- | ---: | --- |
-| 16 | What a harness is: Claude Code from the inside | 11 | coming |
+| 16 | [What a harness is: Claude Code from the inside](16-inside-claude-code/) | 11 | ready |
 | 17 | Tool calls at the token level: a tiny harness | 8 | coming |
 | 18 | An engine that keeps the receipts | 10 | coming |
 | 19 | The sandbox: a small model typing bash on your laptop | 9 | coming |
