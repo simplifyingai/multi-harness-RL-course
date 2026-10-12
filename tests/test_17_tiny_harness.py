@@ -830,6 +830,7 @@ def test_the_experiments_print(monkeypatch: pytest.MonkeyPatch) -> None:
         "experiments.py · mini-swe-agent's text protocol",
         "0 found: format error 3 of 3",
         'unseen       a tool call in LFM2.5\'s own syntax: bash {"command": "ls"}',
+        "never reads: 3, of which 3 parse as a call",
         "exit status: RepeatedFormatError after 3 of 8 calls",
         "chapter 1's grader: wrong (no answer.txt) · reward 0",
     ):
@@ -966,3 +967,11 @@ def test_the_last_unreadable_reply_is_not_called_an_answer(workdir: Path) -> Non
     text = printed.getvalue()
     assert "the last one allowed" in text
     assert "this is the final answer" not in text
+
+
+def test_a_block_that_does_not_parse_is_still_reported() -> None:
+    reply = f'Plan.</think>{START}[sqlite3 data.db ".tables"\')]{END}{EOT}'
+    assert report.native_blocks(reply) == [
+        "a tool-call block that does not parse as a call: "
+        '[sqlite3 data.db ".tables"\')]'
+    ]

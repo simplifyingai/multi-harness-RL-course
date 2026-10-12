@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from lfm_files import MAX_CALLS, MAX_UNREADABLE, OUTPUT_CAP, gigabytes, short_path
 from tasks import ANSWER_FILE, DATABASE_FILE, Task
-from toolcalls import THINK_CLOSE, THINK_OPEN
+from toolcalls import THINK_CLOSE, THINK_OPEN, TOOL_BLOCK, parse_calls
 
 if TYPE_CHECKING:  # for type hints only: these modules print through this one
     from experiments import RecordedEvent, TextRun, TextTurn
@@ -412,8 +412,8 @@ def print_recorded(events: Sequence[RecordedEvent], path: Path, mark: str) -> No
     )
     print(
         f"{INDENT}{RECORDED_HARNESS} offered one tool, 'Bash'; recorded by the "
-        f"project on {RECORDED_ON} with greedy decoding and a {MAX_CALLS}-call "
-        f"budget (data/{path.name})"
+        f"project on {RECORDED_ON} with greedy decoding and a budget of "
+        f"{MAX_CALLS} calls (data/{path.name})"
     )
     calls = [event for event in events if event.kind == "call"]
     for event in events:
@@ -470,6 +470,29 @@ def print_text_rule(system_prompt: str) -> None:
         print(INDENT + line)
 
 
+def native_blocks(text: str) -> list[str]:
+    """Describe each tool-call block a reply opened after its reasoning.
+
+    Args:
+        text: The reply, special tokens kept.
+
+    Returns:
+        One line per block: the call it parses as, or the block's own text
+        when it does not parse.
+    """
+    visible = text.partition(THINK_CLOSE)[2]
+    lines = []
+    for source in TOOL_BLOCK.findall(visible):
+        calls = parse_calls(source, None)
+        if calls:
+            lines += [
+                f"a tool call in LFM2.5's own syntax: {c.as_json()}" for c in calls
+            ]
+        else:
+            lines.append(f"a tool-call block that does not parse as a call: {source}")
+    return lines
+
+
 def text_turn_printer(full: bool, max_errors: int) -> Callable[[TextTurn], None]:
     """Make the function that prints each text-protocol call as it happens.
 
@@ -501,8 +524,8 @@ def text_turn_printer(full: bool, max_errors: int) -> Callable[[TextTurn], None]
             return
         errors = f"format error {turn.format_errors} of {max_errors}"
         labelled("bash blocks", f"{len(turn.actions)} found: {errors}")
-        for call in turn.parsed.calls:
-            labelled("unseen", f"a tool call in LFM2.5's own syntax: {call.as_json()}")
+        for block in native_blocks(turn.reply.text):
+            labelled("unseen", block)
         # Blank lines left out, the first few lines hold the error itself.
         message = (
             turn.answer if full else "\n".join(filter(None, turn.answer.splitlines()))
@@ -522,12 +545,13 @@ def print_text_result(run: TextRun, max_calls: int) -> None:
         max_calls: The step limit.
     """
     heading("the result")
-    unseen = sum(len(turn.parsed.calls) for turn in run.turns)
+    opened = sum(turn.parsed.opened for turn in run.turns)
+    parsed = sum(len(turn.parsed.calls) for turn in run.turns)
     used = f"{len(run.turns)} of {max_calls} calls"
     print(f"{INDENT}exit status: {run.exit_status} after {used}")
     print(
-        f"{INDENT}tool calls written in LFM2.5's own syntax, which this protocol "
-        f"never reads: {unseen}"
+        f"{INDENT}tool-call blocks written in LFM2.5's own syntax, which this "
+        f"protocol never reads: {opened}, of which {parsed} parse as a call"
     )
     verdict = "correct" if run.grade.correct else f"wrong ({run.grade.reason})"
     reward = REWARD_RIGHT if run.grade.correct else REWARD_WRONG
