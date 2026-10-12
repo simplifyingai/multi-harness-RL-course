@@ -1203,3 +1203,49 @@ def test_reminder_counts_only_the_model_calls_claude_code_sent() -> None:
         claude_code.RelayedRequest("/v1/messages", {"model": "x"}),
     ]
     assert reminder.model_calls(kept) == [{"messages": []}]
+
+
+def test_crosscheck_counts_empty_replies_and_sets_the_budget_stop_aside(
+    capsys: pytest.CaptureFixture,
+) -> None:
+    # Call 2 came back empty and cut at the cap: Claude Code prints no
+    # assistant event for it, only its raw stream. The third reply is the
+    # proxy's own answer once the budget is spent: 0 tokens, never recorded.
+    events = stream_events([("m1", "ls", 9)])
+    for message_id, tokens, stop in (("m2", 1024, "max_tokens"), ("m3", 0, "end_turn")):
+        start = {"type": "message_start", "message": {"id": message_id}}
+        delta = {
+            "type": "message_delta",
+            "delta": {"stop_reason": stop},
+            "usage": {"output_tokens": tokens},
+        }
+        events += [
+            {"type": "stream_event", "event": start},
+            {"type": "stream_event", "event": delta},
+        ]
+    events.append(
+        {
+            "type": "assistant",
+            "message": {
+                "id": "m3",
+                "content": [{"type": "text", "text": "Step budget exhausted"}],
+            },
+        }
+    )
+    replies = crosscheck.logged_replies(events)
+    assert [(r.summary, r.output_tokens, r.cut_and_empty) for r in replies] == [
+        ("Bash: ls", 9, False),
+        ("", 1024, True),
+        ("text: Step budget exhausted", 0, False),
+    ]
+    document = recorded([9, 1024])
+    document["turns"][1]["response_message"] = {"content": None}
+    document["budget_stop_count"] = 1
+    checks = {c.name: c for c in crosscheck.compare(document, replies)}
+    assert all(check.ok for check in checks.values())
+    assert checks["turns"].detail.endswith(
+        "(+1 answered by the proxy itself: the call budget)"
+    )
+    out = capsys.readouterr().out
+    assert "(empty, cut at the output cap)" in out
+    assert "note: calls 2 came back empty, cut at the output cap" in out

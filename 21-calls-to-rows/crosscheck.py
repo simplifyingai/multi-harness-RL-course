@@ -14,7 +14,11 @@ For a run folder written by ``reminder.py`` (``rollout.json``, the proxy's
 record, and ``stream.jsonl``, Claude Code's), it compares:
 
 * **turns**: every call the proxy recorded (the discarded ones aside)
-  against every reply in Claude Code's log, in order;
+  against every reply in Claude Code's log, in order. A reply with nothing
+  in it gets no message in the log, only its raw stream events, so replies
+  are counted from those; the proxy's own answers once a session's call
+  budget is spent are in the log but were never recorded, so they are set
+  aside;
 * **replies**: the tool call (or text) of each, on both sides;
 * **completion tokens**: what the engine sampled for each call (the
   proxy's ``n_sampled``) against what Claude Code was told it received
@@ -53,7 +57,12 @@ NO_COUNTS_NOTE = (
     " (the log states no count for some replies: was Claude Code run with "
     "--include-partial-messages?)"
 )
-UNNAMED = "?"  # a tool call whose name the log does not give
+UNNAMED = "?"
+MAX_TOKENS = "max_tokens"  # Anthropic's stop reason for a reply the cap cut off
+EMPTY = "(empty)"
+CUT_EMPTY = (
+    "(empty, cut at the output cap)"  # a tool call whose name the log does not give
+)
 SHOWN_REPLY_CHARS = 60  # Claude Code's reply, when it differs from the proxy's
 
 
@@ -67,14 +76,22 @@ class LoggedReply:
 
     Attributes:
         message_id: The reply's id.
-        summary: Its tool calls (or text), as one line.
+        summary: Its tool calls (or text), as one line; "" for an empty reply.
         output_tokens: The tokens Claude Code was told the reply held, or
             None when the log has no stream events.
+        stop_reason: Why the reply ended (``tool_use``, ``end_turn``,
+            ``max_tokens``), or None when the log does not say.
     """
 
     message_id: str
     summary: str
     output_tokens: int | None
+    stop_reason: str | None = None
+
+    @property
+    def cut_and_empty(self) -> bool:
+        """True for a reply with nothing in it that the output cap cut off."""
+        return not self.summary and self.stop_reason == MAX_TOKENS
 
 
 @dataclass(frozen=True)
@@ -158,18 +175,21 @@ def logged_replies(events: list[dict[str, Any]]) -> list[LoggedReply]:
     """Read every reply out of Claude Code's stream-json log, in order.
 
     Claude Code prints one ``assistant`` event per finished part of a reply,
-    all with the reply's id; with ``--include-partial-messages`` it also
-    prints the raw stream: a ``message_start`` naming the id, and a
-    ``message_delta`` with the reply's ``output_tokens``.
+    all with the reply's id, and none for a reply with nothing in it; with
+    ``--include-partial-messages`` it also prints the raw stream of every
+    reply: a ``message_start`` naming the id, and a ``message_delta`` with
+    the reply's ``output_tokens`` and its stop reason. So the replies are
+    counted from both, in the order they first appear.
 
     Args:
         events: The log's events.
 
     Returns:
-        One entry per reply.
+        One entry per reply, empty ones included.
     """
-    parts: dict[str, list[str]] = {}
+    parts: dict[str, list[str]] = {}  # insertion order is the replies' order
     tokens: dict[str, int] = {}
+    stops: dict[str, str] = {}
     current = ""
     for event in events:
         kind = event.get("type")
@@ -188,14 +208,44 @@ def logged_replies(events: list[dict[str, Any]]) -> list[LoggedReply]:
             raw = event.get("event") or {}
             if raw.get("type") == "message_start":
                 current = (raw.get("message") or {}).get("id", "")
+                if current:
+                    parts.setdefault(current, [])  # seen, even if never printed
             elif raw.get("type") == "message_delta" and current:
                 told = (raw.get("usage") or {}).get("output_tokens")
                 if isinstance(told, int):  # absent stays absent, not 0
                     tokens[current] = told
+                stop = (raw.get("delta") or {}).get("stop_reason")
+                if isinstance(stop, str):
+                    stops[current] = stop
     return [
-        LoggedReply(message_id, "; ".join(pieces), tokens.get(message_id))
+        LoggedReply(
+            message_id, "; ".join(pieces), tokens.get(message_id), stops.get(message_id)
+        )
         for message_id, pieces in parts.items()
     ]
+
+
+def proxy_answers(
+    turns: list[dict[str, Any]], replies: list[LoggedReply], budget_stops: int
+) -> list[LoggedReply]:
+    """Find the replies the proxy wrote itself: its answers once the budget ran out.
+
+    The proxy answers a call over the session's budget with a fixed text and
+    records no turn for it, so those replies are in Claude Code's log only:
+    at its end, with no tokens.
+
+    Args:
+        turns: The proxy's turns (the discarded ones aside).
+        replies: Claude Code's replies, in order.
+        budget_stops: The document's ``budget_stop_count``.
+
+    Returns:
+        The trailing replies that are the proxy's own, or none.
+    """
+    extra = replies[len(turns) :]
+    if extra and len(extra) <= budget_stops and not any(r.output_tokens for r in extra):
+        return extra
+    return []
 
 
 def recorded_summary(turn: dict[str, Any]) -> str:
@@ -245,6 +295,9 @@ def compare(document: dict[str, Any], replies: list[LoggedReply]) -> list[Check]
     """
     turns = [turn for turn in document["turns"] if not turn.get("discarded")]
     dropped = len(document["turns"]) - len(turns)
+    budget_stops = int(document.get("budget_stop_count") or 0)
+    by_proxy = proxy_answers(turns, replies, budget_stops)
+    replies = replies[: len(replies) - len(by_proxy)]
     print(f"{INDENT}call  proxy: wrote  Claude Code: told  reply")
     replies_ok = tokens_ok = True
     for number, (turn, reply) in enumerate(zip(turns, replies, strict=False), start=1):
@@ -255,14 +308,30 @@ def compare(document: dict[str, Any], replies: list[LoggedReply]) -> list[Check]
         tokens_ok &= token_match
         told = "-" if reply.output_tokens is None else f"{reply.output_tokens:,}"
         verdict = OK if reply_match and token_match else MISMATCH
+        shown = recorded or (CUT_EMPTY if reply.cut_and_empty else EMPTY)
         print(
             f"{INDENT}{number:>4}  {turn['n_sampled']:>12,}  {told:>17}  "
-            f"{clip(recorded, REPLY_CHARS):<{REPLY_CHARS}}  {verdict}"
+            f"{clip(shown, REPLY_CHARS):<{REPLY_CHARS}}  {verdict}"
         )
         if not reply_match:
             shown = clip(reply.summary, SHOWN_REPLY_CHARS)
             print(f"{INDENT}      Claude Code's reply: {shown}")
+    for reply in by_proxy:
+        print(f"{INDENT}   +  answered by the proxy itself: {clip(reply.summary, 50)}")
+    cut = [n for n, r in enumerate(replies, start=1) if r.cut_and_empty]
+    if cut:
+        held = sum(turns[n - 1]["n_sampled"] for n in cut)
+        print(
+            f"{INDENT}note: calls {', '.join(map(str, cut))} came back empty, cut at "
+            f"the output cap: Claude Code printed no message for them, and the "
+            f"rows hold their {held:,} tokens"
+        )
     extra = f" ({dropped} discarded turns set aside)" if dropped else ""
+    budget_note = ""
+    if by_proxy:
+        budget_note = (
+            f" (+{len(by_proxy)} answered by the proxy itself: the call budget)"
+        )
     counted = [r.output_tokens for r in replies]
     sampled = [turn["n_sampled"] for turn in turns]
     trained = [
@@ -276,7 +345,7 @@ def compare(document: dict[str, Any], replies: list[LoggedReply]) -> list[Check]
             "turns",
             len(turns) == len(replies),
             f"{len(turns)}/{len(replies)}: {len(turns)} recorded{extra}, "
-            f"{len(replies)} in Claude Code's log",
+            f"{len(replies)} in Claude Code's log{budget_note}",
         ),
         Check("replies", replies_ok and len(turns) == len(replies), "call by call"),
         Check(
