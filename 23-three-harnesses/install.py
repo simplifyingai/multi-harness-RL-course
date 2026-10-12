@@ -64,6 +64,8 @@ PYPI, NPM = "pypi", "npm"
 NPM_REGISTRY = "https://registry.npmjs.org/"
 NPM_FOLDER = "npm"  # npm's private settings file and cache
 NPM_SETTINGS_FILE = "npmrc"  # empty: your own npm settings are never read
+# Empty too, in place of Homebrew's etc/npmrc. npm refuses one file as both.
+NPM_GLOBAL_SETTINGS_FILE = "npmrc-global"
 NPM_CACHE_FOLDER = "cache"
 PYPI_INDEX = "https://pypi.org/simple"
 UV_FOLDER = "uv"  # uv's private cache and the Python it installs
@@ -326,12 +328,11 @@ def npm_environment() -> dict[str, str]:
         The environment for ``npm install`` (nothing is written here).
     """
     folder = install_root() / NPM_FOLDER
-    settings = str(folder / NPM_SETTINGS_FILE)
     return {
         "PATH": os.environ.get("PATH", SAFE_PATH),
         "HOME": str(folder),  # npm looks for ~/.npmrc here, and finds none
-        "npm_config_userconfig": settings,
-        "npm_config_globalconfig": settings,  # not Homebrew's etc/npmrc either
+        "npm_config_userconfig": str(folder / NPM_SETTINGS_FILE),
+        "npm_config_globalconfig": str(folder / NPM_GLOBAL_SETTINGS_FILE),
         "npm_config_cache": str(folder / NPM_CACHE_FOLDER),
         "npm_config_registry": NPM_REGISTRY,
         "npm_config_update_notifier": "false",
@@ -377,7 +378,8 @@ def prepare_installer(kind: str) -> None:
     folder = install_root() / (UV_FOLDER if kind == PYPI else NPM_FOLDER)
     folder.mkdir(parents=True, exist_ok=True)
     if kind == NPM:
-        (folder / NPM_SETTINGS_FILE).write_text("", encoding="utf-8")
+        for name in (NPM_SETTINGS_FILE, NPM_GLOBAL_SETTINGS_FILE):
+            (folder / name).write_text("", encoding="utf-8")
 
 
 def install_commands(name: str) -> list[list[str]]:

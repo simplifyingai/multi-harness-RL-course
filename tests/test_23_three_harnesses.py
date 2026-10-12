@@ -168,8 +168,10 @@ def test_npm_installs_with_private_settings_and_the_public_registry(
     assert not (chapter / "npm").exists()  # working it out writes nothing
     install.prepare_installer(install.NPM)
     assert env["npm_config_userconfig"] == str(chapter / "npm" / "npmrc")
-    assert env["npm_config_globalconfig"] == env["npm_config_userconfig"]
+    # Two files: npm refuses to load one file as both (measured on npm 10.9).
+    assert env["npm_config_globalconfig"] == str(chapter / "npm" / "npmrc-global")
     assert (chapter / "npm" / "npmrc").read_text() == ""  # nothing of yours
+    assert (chapter / "npm" / "npmrc-global").read_text() == ""
     assert env["npm_config_registry"] == "https://registry.npmjs.org/"
     assert env["HOME"] == str(chapter / "npm")
     assert str(Path.home()) not in env["npm_config_cache"]
