@@ -11,6 +11,7 @@ import errno
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -406,8 +407,39 @@ def test_exit_status_is_a_shells() -> None:
         return process.ProcessOutcome(code, 0.0, timed_out, root_pid=1)
 
     assert runner.exit_status(outcome(None, timed_out=True)) == 124
+    assert runner.exit_status(outcome(None)) == 124
     assert runner.exit_status(outcome(-9)) == 137
+    assert runner.exit_status(outcome(-15)) == 143
     assert runner.exit_status(outcome(3)) == 3
+
+
+@pytest.mark.parametrize(
+    "text", ["SELECT COUNT(*) FROM t WHERE city = 'Murcia'", 'a$HOME `id` "q" \\x']
+)
+def test_double_quote_survives_bash_unchanged(text: str) -> None:
+    quoted = attacks.double_quote(text)
+    done = subprocess.run(
+        ["/bin/bash", "-c", f"printf %s {quoted}"], capture_output=True, text=True
+    )
+    assert done.stdout == text
+
+
+def test_without_printed_proof_the_outside_check_decides() -> None:
+    silent = attacks.Attempt("x", "test -e x", attacks.Outcome.DENIED, evidence="")
+    run = process.ProcessOutcome(1, 0.0, False, root_pid=1)
+    present = attacks.Outside("present", True)
+    assert attacks.classify(silent, run, "", present)[0] == attacks.Outcome.DENIED
+    assert attacks.classify(silent, run, "", None)[0] == "inconclusive"
+
+
+def test_a_failed_control_is_unexpected_not_inconclusive() -> None:
+    work = attacks.Attempt("query", "sqlite3 x", attacks.Outcome.ALLOWED)
+    probe = attacks.Attempt("key", "cat x", attacks.Outcome.DENIED)
+    failed = attacks.Outcome.INCONCLUSIVE
+    broken = attacks.Result(work, failed, attacks.Outcome.ALLOWED, "-", "why")
+    missing = attacks.Result(probe, failed, attacks.Outcome.DENIED, "absent", "why")
+    assert broken.unexpected and broken.check == "UNEXPECTED"
+    assert not missing.unexpected and missing.check.startswith("inconclusive")
 
 
 def test_attempt_expectations_differ_only_where_v1_does() -> None:
@@ -422,6 +454,7 @@ def test_attempt_expectations_differ_only_where_v1_does() -> None:
     [
         (0, False, "", True, attacks.Outcome.ALLOWED),
         (1, False, "cat: x: Operation not permitted", True, attacks.Outcome.DENIED),
+        (1, False, "EPERM: OPERATION NOT PERMITTED", True, attacks.Outcome.DENIED),
         (1, False, "cat: x: No such file or directory", True, "inconclusive"),
         (1, False, "cat: x: Operation not permitted", False, "inconclusive"),
         (127, False, "bash: cat: command not found", True, "inconclusive"),

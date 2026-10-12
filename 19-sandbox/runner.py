@@ -285,10 +285,10 @@ def describe_processes(outcome: ProcessOutcome, *, group_only: bool) -> list[str
         lines.append(f"reaped     group {outcome.root_pid} killed, and nothing else")
     else:
         lines.append(
-            f"reaped     group {outcome.root_pid} killed, then {REAP_PASSES} "
+            f"reaped     group {outcome.root_pid} killed; after it, {REAP_PASSES} "
             "sweeps signalled "
             f"{count} {'process' if count == 1 else 'processes'} "
-            "(the tree, every group it used, the marker)"
+            "more (the tree, every group it used, the marker)"
         )
     pids = ",".join(str(row.pid) for row in seen)
     if not outcome.survivors:

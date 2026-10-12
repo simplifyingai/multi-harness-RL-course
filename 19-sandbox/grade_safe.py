@@ -20,7 +20,8 @@ cannot make it wait forever), then ``fstat`` to accept only a regular file,
 and at most 64 KiB is read. A hard link is a second NAME for the same file, so
 ``O_NOFOLLOW`` cannot see it; the box already refuses to make one to a file it
 may not read (the demo shows it), and the grader also refuses any answer.txt
-with more than one name.
+with more than one name. That is deliberately strict: an agent that hard-links
+its own answer.txt elsewhere is graded wrong, with the reason saying why.
 
 The demo's "secret" is the decoy ``.env`` (``decoys.py``), never a real file.
 """
