@@ -881,6 +881,21 @@ def test_both_causes_of_drift_are_found_where_they_happen(
     assert drift.compare(chain, restored, start).position is None
 
 
+def test_a_difference_in_the_cut_alone_is_named_as_such() -> None:
+    model = FakeModel([])
+    prompt = encode("<|im_start|>assistant\n<think>")
+    sampled = encode(f"Hm.</think>{START}[bash(command='") + [PLAIN + ord("c")]
+    sampled += [PLAIN + ord("h")] + encode(f"')]{END}") + [EOS]
+    chain = prompt + sampled
+    rendered = encode(decode(chain) + "\n<|im_start|>tool\nok<|im_end|>\n")
+    found = drift.compare(chain, rendered, len(prompt))
+    first = drift.describe(model, found, chain, rendered)[0]
+    assert first.endswith("in the tool-call span: the same text, cut into other tokens")
+    respelled = encode(decode(chain).replace("'ch'", '"ch"'))
+    found = drift.compare(chain, respelled, len(prompt))
+    assert not drift.describe(model, found, chain, respelled)[0].endswith("tokens")
+
+
 def test_where_names_the_part_of_the_reply() -> None:
     model = FakeModel([])
     reply = encode(f"think</think>hi{START}[bash()]{END}")

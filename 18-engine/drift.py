@@ -76,6 +76,7 @@ RESPELLED, RECUT = "re-spelled", "re-cut"  # the two recorded replies' names
 IN_REASONING = "in the reasoning"
 IN_TOOL_CALL = "in the tool-call span"
 IN_VISIBLE = "in the visible text"
+SAME_TEXT = ": the same text, cut into other tokens"
 WINDOW = 3  # tokens shown on each side of a difference
 STAND_IN = "(a recorded reply follows; the project's prompt is not bundled)"
 NOT_RERUN = "(the recorded tool result is not bundled)"
@@ -187,6 +188,28 @@ def window(model: Model, ids: list[int], position: int) -> str:
     return " ".join([*pieces[:cut], "|", *pieces[cut:]])
 
 
+def same_text(
+    model: Model, drift: Drift, chain: list[int], rendered: list[int]
+) -> bool:
+    """Say whether a re-rendered prompt holds the reply's exact text, cut otherwise.
+
+    Two token lists can spell the same text (chapter 9). Then the template
+    wrote nothing new: the difference is in how the text was cut into tokens.
+
+    Args:
+        model: The model (to read the text).
+        drift: From ``compare``.
+        chain: The previous prompt and reply.
+        rendered: The re-rendered prompt.
+
+    Returns:
+        True when the re-rendered text from the reply's start begins with the
+        reply's own text.
+    """
+    reply = model.decode(chain[drift.reply_start :])
+    return model.decode(rendered[drift.reply_start :]).startswith(reply)
+
+
 def describe(
     model: Model, drift: Drift, chain: list[int], rendered: list[int]
 ) -> list[str]:
@@ -212,6 +235,8 @@ def describe(
         offset = drift.position - drift.reply_start
         reply = chain[drift.reply_start :]
         place = f"token {offset + 1:,} of the reply, {where(model, reply, offset)}"
+        if same_text(model, drift, chain, rendered):
+            place += SAME_TEXT
     return [
         f"first difference: {place}",
         f"{INDENT}sampled      {window(model, chain, drift.position)}",
