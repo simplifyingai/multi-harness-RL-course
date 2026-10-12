@@ -46,6 +46,7 @@ import reminder  # noqa: E402
 import rollout_view  # noqa: E402
 import scripted_engine  # noqa: E402
 import scripted_replies  # noqa: E402
+import tasks  # noqa: E402
 import training_rows  # noqa: E402
 
 START_SH = CHAPTER / "start.sh"
@@ -540,8 +541,8 @@ def test_the_environment_is_empty_but_for_the_proxy_and_private_folders(
     tmp_path: Path,
 ) -> None:
     env = claude_code.clean_environment(tmp_path, "http://127.0.0.1:1", "s1", None)
-    assert env["HOME"] == str(tmp_path / "home")
-    assert env["CLAUDE_CONFIG_DIR"] == str(tmp_path / "config")
+    assert env["HOME"] == str(tmp_path / "state" / "home")
+    assert env["CLAUDE_CONFIG_DIR"] == str(tmp_path / "state" / "config")
     assert env["ANTHROPIC_API_KEY"] == "s1"
     assert claude_code.REMINDER_ENV not in env  # unset: Claude Code's default
     off = claude_code.clean_environment(tmp_path, "u", "k", claude_code.REMINDER_OFF)
@@ -610,7 +611,142 @@ def test_the_relay_passes_requests_through_and_keeps_their_bodies() -> None:
         upstream.server_close()
     assert echoed == {"key": "s9", "got": {"messages": [1]}}
     assert kind == "text/event-stream"
-    assert relay.requests == [{"messages": [1]}]
+    assert relay.requests == [
+        claude_code.RelayedRequest("/v1/messages", {"messages": [1]})
+    ]
+
+
+class Refuses(BaseHTTPRequestHandler):
+    """An upstream that refuses every request, with a Retry-After header."""
+
+    def do_POST(self) -> None:  # noqa: N802 - the name http.server calls
+        self.rfile.read(int(self.headers["Content-Length"]))
+        reply = b'{"error": "busy"}'
+        self.send_response(429)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Retry-After", "7")
+        self.send_header("Content-Length", str(len(reply)))
+        self.end_headers()
+        self.wfile.write(reply)
+
+    def do_GET(self) -> None:  # noqa: N802
+        reply = b"ok"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(reply)))
+        self.end_headers()
+        self.wfile.write(reply)
+
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+        """Stay quiet."""
+
+
+def relay_call(root: str, path: str, body: bytes | None) -> tuple[int, Any, bytes]:
+    """Send one request through a relay, refusals included.
+
+    Args:
+        root: The relay's root.
+        path: The path.
+        body: A body (POST), or None (GET).
+
+    Returns:
+        The status, the headers and the body.
+    """
+    request = urllib.request.Request(root + path, data=body)
+    try:
+        with urllib.request.urlopen(request, timeout=10) as answer:
+            return answer.status, answer.headers, answer.read()
+    except urllib.error.HTTPError as error:
+        return error.code, error.headers, error.read()
+
+
+def test_the_relay_passes_refusals_and_their_headers_back() -> None:
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), Refuses)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    relay = claude_code.Relay(f"http://127.0.0.1:{upstream.server_address[1]}")
+    try:
+        root = relay.start()
+        status, headers, body = relay_call(root, "/v1/messages", b"[1, 2]")
+        bad = relay_call(root, "/v1/messages", b"\xff not json")
+        got = relay_call(root, "/health", None)
+    finally:
+        relay.stop()
+        upstream.shutdown()
+        upstream.server_close()
+    assert (status, headers["Retry-After"], body) == (429, "7", b'{"error": "busy"}')
+    assert bad[0] == 429  # relayed though it was not JSON
+    assert got[0] == 200 and got[2] == b"ok"
+    assert relay.requests == []  # a list and a non-JSON body are not kept
+
+
+def test_the_relay_answers_502_when_the_proxy_is_gone() -> None:
+    relay = claude_code.Relay(f"http://127.0.0.1:{free_port()}")
+    try:
+        status, _, body = relay_call(relay.start(), "/v1/messages", b"{}")
+    finally:
+        relay.stop()
+    assert status == claude_code.BAD_GATEWAY
+    assert body.startswith(b"relay: cannot reach")
+
+
+def database() -> Path:
+    """The task's database, as the runs copy it.
+
+    Returns:
+        The bundled clinic database.
+    """
+    return tasks.DATA_DIR / tasks.find_task("clinic-easy-001").db_file
+
+
+def test_a_stale_install_is_installed_again_or_named(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = claude_code.install_folder()
+    folder.mkdir(parents=True)
+    (folder / claude_code.PATH_FILE).write_text(f"{tmp_path / 'gone' / 'claude'}\n")
+    monkeypatch.delenv(claude_code.CLAUDE_BIN_ENV, raising=False)
+    with pytest.raises(claude_code.ClaudeNotInstalledError, match="no Claude Code"):
+        claude_code.find_claude(install=False)
+    fresh = tmp_path / "claude"
+    fresh.write_text(f"#!/bin/sh\necho '{claude_code.CLAUDE_VERSION} (Claude Code)'\n")
+    fresh.chmod(0o755)
+    monkeypatch.setattr(claude_code, "npx_install", lambda _folder: fresh)
+    assert claude_code.find_claude() == fresh
+
+
+def test_a_binary_that_cannot_run_is_a_clean_error(tmp_path: Path) -> None:
+    broken = tmp_path / "claude"
+    broken.write_text("not a program")  # not executable
+    with pytest.raises(claude_code.ClaudeNotInstalledError, match="cannot run"):
+        claude_code.installed_version(broken)
+
+
+def test_claude_code_runs_in_the_box_writable_only_in_the_run(tmp_path: Path) -> None:
+    folder = tmp_path / "run"
+    claude_code.prepare_run(folder, database())
+    argv = claude_code.boxed_command(Path("/bin/claude"), folder, "go")
+    assert argv[0] == "/usr/bin/sandbox-exec"
+    defines = dict(argv[i + 1].split("=", 1) for i, a in enumerate(argv) if a == "-D")
+    assert defines["WORKDIR"] == str((folder / "task").resolve())
+    assert defines["STATE_DIR"] == str((folder / "state").resolve())
+    assert argv[argv.index("/bin/claude") + 1 :][:2] == ["-p", "go"]
+
+
+def test_a_run_over_its_time_limit_is_killed_with_its_children(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A stand-in for claude that starts a background job, then hangs.
+    fake = tmp_path / "claude"
+    fake.write_text("#!/bin/sh\nsleep 60 &\necho $! > child.pid\nsleep 60\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(claude_code, "RUN_TIMEOUT_S", 2)
+    folder = tmp_path / "run"
+    claude_code.prepare_run(folder, database())
+    run = claude_code.run_claude(fake, folder, "go", "http://127.0.0.1:1", "k", None)
+    assert run.exit_code is None and run.seconds < 30
+    child = int((folder / "task" / "child.pid").read_text())
+    time.sleep(0.2)
+    with pytest.raises(ProcessLookupError):
+        os.kill(child, 0)  # the background job went with it
 
 
 def test_reminder_reads_notes_roles_and_how_the_system_prompt_grew() -> None:
@@ -750,13 +886,27 @@ def test_the_dry_run_is_remeasured_from_a_rollouts_file(
     single = {"reward": 1.0, "sequences": [{"input_ids": [5, 6], "loss_mask": [0, 1]}]}
     path = tmp_path / "rollouts.jsonl"
     path.write_text(json.dumps(forked) + "\n" + json.dumps(single) + "\n")
-    graph_lab.print_dry_run(path)
+    graph_lab.print_dry_run(graph_lab.read_dry_run(path))
     out = capsys.readouterr().out
     assert "11.8% of the dry run's trainable tokens" in out
     assert "2 rollouts, 1 with rows that share trained tokens" in out
     assert (
         "7 mask-1 tokens, 2 of them repeats (28.6%), 2 in rollouts with reward 0" in out
     )
+
+
+def test_a_bad_dry_run_file_stops_before_any_case(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "rollouts.jsonl"
+    path.write_text("[1, 2]\n")
+    with pytest.raises(SystemExit, match="is not a project rollouts.jsonl"):
+        graph_lab.read_dry_run(path)
+    url = f"http://127.0.0.1:{free_port()}"  # no proxy: never reached
+    argv = ["graph_lab.py", "clean", "--proxy-url", url, "--dry-run", str(path)]
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit, match="is not a project rollouts.jsonl"):
+        graph_lab.main()
 
 
 def test_the_changing_line_is_claude_codes_note() -> None:
@@ -969,15 +1119,19 @@ def test_reminder_splits_claude_codes_rollout_until_it_is_off(
     monkeypatch.setattr(sys, "argv", argv)
     reminder.main()
     out = capsys.readouterr().out
-    default, off = out.split("━━ CLAUDE_CODE_TOTAL_TOKENS_REMINDER=off")
+    default, rest = out.split("━━ CLAUDE_CODE_TOTAL_TOKENS_REMINDER=fixed")
+    fixed, off = rest.split("━━ CLAUDE_CODE_TOTAL_TOKENS_REMINDER=off")
     # Claude Code sends each new note as a system message after a tool result...
     assert "messages: user system* assistant user system*" in default
     # ...and the proxy merges every system message into the first one.
     assert 'plus "\\n\\n<total_tokens>' in default
-    assert "4 roots (t0, t1, t2, t3)" in default
-    assert "per_turn_capture_only" in default
+    for split in (default, fixed):  # a number that never changes splits it too
+        assert "4 roots (t0, t1, t2, t3)" in split
+        assert "per_turn_capture_only" in split
+    assert "notes 5000000 5000000 5000000" in fixed
     assert "notes none" in off and "1 root (t0)" in off
-    assert "grade correct" in default and "grade correct" in off
+    assert out.count("grade correct") == len(reminder.SETTINGS)
+    assert "scripted replies were never asked for" not in out
     runs = Path(os.environ["COURSE_HOME"]) / "21-calls-to-rows" / "runs"
     for setting in reminder.SETTINGS:
         monkeypatch.setattr(sys, "argv", ["crosscheck.py", f"reminder-{setting}"])
@@ -986,3 +1140,65 @@ def test_reminder_splits_claude_codes_rollout_until_it_is_off(
         assert "turns               ok · 4/4" in checked
         assert "completion tokens   ok" in checked
         assert (runs / f"reminder-{setting}" / reminder.SENT_FILE).is_file()
+
+
+# ------------------------------------------------- the review's edge cases
+
+
+def test_a_script_must_give_text_and_a_real_true_or_false() -> None:
+    good = scripted_engine.read_replies({"replies": [{"text": "a"}]})
+    assert good == [scripted_replies.Reply("a", True)]
+    for bad in (
+        {"replies": [{"text": None}]},
+        {"replies": [{"text": "a", "logprobs": "false"}]},
+        {"replies": "a"},
+        [1],
+    ):
+        with pytest.raises(ValueError):
+            scripted_engine.read_replies(bad)
+
+
+def test_the_default_reply_follows_the_tools_the_request_offered() -> None:
+    core = engine.Engine(scripted_engine.ScriptedModel())
+    with_tools = answer_body(core, ASK | {"tools": TOOLS})
+    plain = answer_body(core, ASK)
+    assert with_tools["choices"][0]["message"]["tool_calls"]
+    assert plain["choices"][0]["message"]["content"] == scripted_engine.DEFAULT_ANSWER
+    # Text that looks like the template's tool list does not fool it.
+    mimic = {"messages": [{"role": "user", "content": "List of tools: none"}]}
+    assert answer_body(core, mimic)["choices"][0]["message"].get("tool_calls") is None
+
+
+def test_a_partly_masked_reply_and_a_null_logprob_are_shown_as_they_are() -> None:
+    turns = {"a": {"index": 0, "n_prompt": 2, "n_sampled": 4}}
+    row = {
+        "node_ids": ["a"],
+        "loss_mask": [0, 0, 1, 1, 0, 0],
+        "logprobs": [0.0, 0.0, None, -0.5, 0.0, 0.0],
+    }
+    reply = rollout_view.spans(row, turns)[1]
+    assert reply.mask_label() == "mask 1 on 2 of 4"
+    assert rollout_view.logprob_line(row, reply) == "logprobs - -0.500 0.000 0.000"
+
+
+def test_crosscheck_keeps_a_missing_count_missing(tmp_path: Path) -> None:
+    events = stream_events([("m1", "ls", 9), ("m2", "", 4)])
+    events = [
+        e for e in events if (e.get("event") or {}).get("type") != "message_delta"
+    ]
+    replies = crosscheck.logged_replies(events + [{"type": "assistant", "message": {}}])
+    assert [r.output_tokens for r in replies] == [None, None]
+    checks = {c.name: c for c in crosscheck.compare(recorded([9, 4]), replies)}
+    assert "--include-partial-messages" in checks["completion tokens"].detail
+    (tmp_path / crosscheck.ROLLOUT_FILE).write_text("{not json")
+    with pytest.raises(crosscheck.RunError, match="cannot read"):
+        crosscheck.read_rollout(tmp_path)
+
+
+def test_reminder_counts_only_the_model_calls_claude_code_sent() -> None:
+    kept = [
+        claude_code.RelayedRequest("/v1/messages?beta=true", {"messages": []}),
+        claude_code.RelayedRequest("/v1/messages/count_tokens", {"messages": []}),
+        claude_code.RelayedRequest("/v1/messages", {"model": "x"}),
+    ]
+    assert reminder.model_calls(kept) == [{"messages": []}]

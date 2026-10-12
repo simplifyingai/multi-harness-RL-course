@@ -49,10 +49,21 @@ END_OF_TURN = "<|im_end|>"
 DEFAULT_THOUGHT = "Look first."
 SCRIPT_PATH = "/script"  # the scripted engine's remote control
 HTTP_TIMEOUT_S = 30
+NOT_FOUND = 404  # what a real engine answers on /script
+# The task every script solves (clinic-easy-001: how many patients live in
+# Murcia? 30), in the commands the scripted model writes.
+TABLES_COMMAND = "sqlite3 data.db .tables"
+MURCIA_COMMAND = (
+    "sqlite3 data.db \"SELECT COUNT(*) FROM patients WHERE city = 'Murcia'\""
+)
 
 
 class ScriptError(Exception):
     """Raised when the scripted engine cannot be reached or refuses a script."""
+
+
+class NotScriptedError(ScriptError):
+    """Raised when the engine answers but has no remote control: a real engine."""
 
 
 @dataclass(frozen=True)
@@ -176,7 +187,8 @@ class ScriptClient:
             The answer: the queue's state.
 
         Raises:
-            ScriptError: If the engine is unreachable or is not scripted.
+            NotScriptedError: If the engine has no remote control.
+            ScriptError: If the engine is unreachable or refuses the request.
         """
         data = None if body is None else json.dumps(body).encode("utf-8")
         request = urllib.request.Request(
@@ -189,9 +201,9 @@ class ScriptClient:
             with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_S) as answer:
                 return json.loads(answer.read())
         except urllib.error.HTTPError as error:
-            if error.code == 404:  # a real engine has no remote control
+            if error.code == NOT_FOUND:  # a real engine has no remote control
                 reason = f"{self.engine_url} is not the scripted engine (no /script)"
-                raise ScriptError(reason) from error
+                raise NotScriptedError(reason) from error
             raise ScriptError(f"HTTP {error.code} from {self.engine_url}") from error
         except (urllib.error.URLError, OSError) as error:
             raise ScriptError(f"cannot reach {self.engine_url}: {error}") from error

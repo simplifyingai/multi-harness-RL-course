@@ -49,6 +49,12 @@ STREAM_FILE = "stream.jsonl"
 AGENT = "agent"
 REPLY_CHARS = 40
 OK, MISMATCH = "ok", "MISMATCH"
+NO_COUNTS_NOTE = (
+    " (the log states no count for some replies: was Claude Code run with "
+    "--include-partial-messages?)"
+)
+UNNAMED = "?"  # a tool call whose name the log does not give
+SHOWN_REPLY_CHARS = 60  # Claude Code's reply, when it differs from the proxy's
 
 
 class RunError(Exception):
@@ -84,6 +90,28 @@ class Check:
     name: str
     ok: bool
     detail: str
+
+
+def read_rollout(folder: Path) -> dict[str, Any]:
+    """Read the proxy's record from a run folder.
+
+    Args:
+        folder: The run's folder.
+
+    Returns:
+        The rollout document.
+
+    Raises:
+        RunError: If it cannot be read or is not a rollout document.
+    """
+    path = folder / ROLLOUT_FILE
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise RunError(f"cannot read {path}: {error}") from error
+    if not isinstance(document, dict) or "turns" not in document:
+        raise RunError(f"{path} is not a rollout document")
+    return document
 
 
 def run_folder(name: str) -> Path:
@@ -146,11 +174,14 @@ def logged_replies(events: list[dict[str, Any]]) -> list[LoggedReply]:
     for event in events:
         kind = event.get("type")
         if kind == "assistant":
-            message = event["message"]
+            message = event.get("message") or {}
+            if not message.get("id"):
+                continue  # not a model reply (Claude Code wrote it itself)
             pieces = parts.setdefault(message["id"], [])
             for block in message.get("content") or []:
                 if block.get("type") == "tool_use":
-                    pieces.append(call_summary(block["name"], block.get("input")))
+                    name = block.get("name", UNNAMED)
+                    pieces.append(call_summary(name, block.get("input")))
                 elif block.get("type") == "text":
                     pieces.append(f"text: {block.get('text', '')}")
         elif kind == "stream_event":
@@ -158,8 +189,9 @@ def logged_replies(events: list[dict[str, Any]]) -> list[LoggedReply]:
             if raw.get("type") == "message_start":
                 current = (raw.get("message") or {}).get("id", "")
             elif raw.get("type") == "message_delta" and current:
-                usage = raw.get("usage") or {}
-                tokens[current] = int(usage.get("output_tokens") or 0)
+                told = (raw.get("usage") or {}).get("output_tokens")
+                if isinstance(told, int):  # absent stays absent, not 0
+                    tokens[current] = told
     return [
         LoggedReply(message_id, "; ".join(pieces), tokens.get(message_id))
         for message_id, pieces in parts.items()
@@ -228,7 +260,8 @@ def compare(document: dict[str, Any], replies: list[LoggedReply]) -> list[Check]
             f"{clip(recorded, REPLY_CHARS):<{REPLY_CHARS}}  {verdict}"
         )
         if not reply_match:
-            print(f"{INDENT}      Claude Code's reply: {clip(reply.summary, 60)}")
+            shown = clip(reply.summary, SHOWN_REPLY_CHARS)
+            print(f"{INDENT}      Claude Code's reply: {shown}")
     extra = f" ({dropped} discarded turns set aside)" if dropped else ""
     counted = [r.output_tokens for r in replies]
     sampled = [turn["n_sampled"] for turn in turns]
@@ -249,7 +282,8 @@ def compare(document: dict[str, Any], replies: list[LoggedReply]) -> list[Check]
         Check(
             "completion tokens",
             tokens_ok and counted == sampled,
-            f"proxy {sum(sampled):,}, Claude Code {sum(c or 0 for c in counted):,}",
+            f"proxy {sum(sampled):,}, Claude Code {sum(c or 0 for c in counted):,}"
+            + (NO_COUNTS_NOTE if None in counted else ""),
         ),
         Check(
             "trainable coverage",
@@ -318,9 +352,9 @@ def main() -> None:
     args = parse_args()
     try:
         folder = run_folder(args.run)
+        document = read_rollout(folder)
     except RunError as error:
         raise SystemExit(str(error)) from error
-    document = json.loads((folder / ROLLOUT_FILE).read_text(encoding="utf-8"))
     events = read_events(folder / STREAM_FILE)
     print(f"{SCRIPT} · {short_path(folder)}: the proxy's record vs Claude Code's log")
     checks = compare(document, logged_replies(events))

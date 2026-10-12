@@ -16,7 +16,7 @@ with either engine.
 ```bash
 ENGINE_PORT=8119 ./start.sh scripted   # the scripted engine on 8119, the proxy on 8200
 uv run graph_lab.py                    # the seven cases (or one: clean, retry, ...)
-uv run reminder.py                     # Claude Code 2.1.290, its total-tokens note on, then off
+uv run reminder.py                     # Claude Code 2.1.290: its total-tokens note unset, fixed, off
 uv run crosscheck.py                   # the proxy's record vs Claude Code's own log
 ./start.sh stop
 ```
@@ -33,7 +33,7 @@ Use 8119 when another program holds the project's port, 8100.
   engine), each printed as graph, rows, findings and stats, then
   `count_calls`, `n_sampled` and `dedupe_shared_prefixes`.
 - `reminder.py`: Claude Code through the proxy with
-  `CLAUDE_CODE_TOTAL_TOKENS_REMINDER` unset and then `off`; what Claude
+  `CLAUDE_CODE_TOTAL_TOKENS_REMINDER` unset, `fixed` and `off`; what Claude
   Code sent (through a recording relay), what the engine received, and
   what the proxy built.
 - `crosscheck.py`: the proxy's turns against Claude Code's stream-json log,
@@ -42,7 +42,10 @@ Use 8119 when another program holds the project's port, 8100.
   `dedupe_shared_prefixes` and `item_from_sequence`, copied.
 - `rollout_view.py`: prints a rollout document as data.
 - `claude_code.py`: the pinned Claude Code, its private config and the
-  project's flags, plus the recording relay.
+  project's flags, run inside the sandbox, plus the recording relay.
+- `sandbox.py`, `sandbox.sb`: chapter 19's sandbox (the project's Seatbelt
+  profile): Claude Code's Bash runs the model's commands without asking, so
+  it may write only in its run's folders and reach only this machine.
 - `scripted_engine.py`, `scripted_replies.py`: chapter 20's engine with a
   scripted model and a remote control (`/script`), and a broken copy under
   `/broken`.

@@ -41,6 +41,8 @@ LOGPROBS_SHOWN = 4  # the first few log-probabilities of a reply
 REPLY_CHARS = 46  # a reply's summary is cut to this many characters
 FINDING_CHARS = 110  # a finding is cut at its first sentence, or here
 SENTENCE_END = ". "
+MISSING = "-"  # a log-probability the row does not have
+NEGATIVE_NOTE = "(shorter than its parent: the turns do not add up to this row)"
 ELLIPSIS = "…"
 # ANSI colours, only when asked or when printing to a terminal.
 STYLES = {
@@ -64,19 +66,36 @@ class Span:
         kind: ``context`` (mask 0: the model read it) or ``model`` (its reply).
         start: The span's first position in the row.
         end: One past its last position.
-        trained: True when the mask is 1 over the span.
+        ones: How many of its positions have mask 1.
     """
 
     turn: str
     kind: str
     start: int
     end: int
-    trained: bool
+    ones: int
 
     @property
     def size(self) -> int:
         """Number of tokens in the span."""
         return self.end - self.start
+
+    @property
+    def trained(self) -> bool:
+        """True when the mask is 1 over the whole (non-empty) span."""
+        return self.size > 0 and self.ones == self.size
+
+    def mask_label(self) -> str:
+        """Say the span's mask: 0, 1, or how much of it is 1.
+
+        Returns:
+            Such as ``mask 1``, ``mask 0`` or ``mask 1 on 3 of 40``.
+        """
+        if self.trained:
+            return "mask 1"
+        if self.ones == 0:
+            return "mask 0"
+        return f"mask 1 on {self.ones:,} of {self.size:,}"
 
 
 class Painter:
@@ -253,13 +272,14 @@ def spans(row: dict[str, Any], turns: dict[str, dict[str, Any]]) -> list[Span]:
     for node_id in row["node_ids"]:
         turn = turns[node_id]
         label = f"t{turn['index']}"
+        mask = row["loss_mask"]
         context = turn["n_prompt"] - previous_end
-        found.append(Span(label, CONTEXT, position, position + context, False))
+        ones = sum(mask[position : position + max(context, 0)])
+        found.append(Span(label, CONTEXT, position, position + context, ones))
         position += context
         sampled = turn["n_sampled"]
-        mask = row["loss_mask"][position : position + sampled]
-        trained = bool(sampled) and all(mask)
-        found.append(Span(label, MODEL, position, position + sampled, trained))
+        ones = sum(mask[position : position + sampled])
+        found.append(Span(label, MODEL, position, position + sampled, ones))
         position += sampled
         previous_end = turn["n_prompt"] + sampled
     return found
@@ -275,10 +295,13 @@ def logprob_line(row: dict[str, Any], span: Span) -> str:
     Returns:
         Such as ``logprobs -0.125 -0.250 -0.375 -0.500 … (30)``.
     """
-    if not span.trained:
+    if span.ones == 0:
         return "no logprobs: mask 0"
     values = row["logprobs"][span.start : span.end]
-    shown = " ".join(f"{value:.3f}" for value in values[:LOGPROBS_SHOWN])
+    shown = " ".join(
+        MISSING if value is None else f"{value:.3f}"
+        for value in values[:LOGPROBS_SHOWN]
+    )
     more = f" {ELLIPSIS}" if len(values) > LOGPROBS_SHOWN else ""
     return f"logprobs {shown}{more}"
 
@@ -330,12 +353,13 @@ def print_row(
     )
     for span in spans(row, turns):
         if span.kind == CONTEXT:
-            text = f"{span.turn:<4} context {span.size:>6,}  mask 0"
+            text = f"{span.turn:<4} context {span.size:>6,}  {span.mask_label()}"
+            if span.size < 0:  # the turns' sizes do not add up to this row
+                text += f"  {NEGATIVE_NOTE}"
             print(f"{INDENT * 2}{painter.paint(text, 'context')}")
             continue
         style = "trained" if span.trained else "untrained"
-        mask = 1 if span.trained else 0
-        text = f"{span.turn:<4} reply   {span.size:>6,}  mask {mask}"
+        text = f"{span.turn:<4} reply   {span.size:>6,}  {span.mask_label()}"
         print(f"{INDENT * 2}{painter.paint(text, style)}  {logprob_line(row, span)}")
     for finding in row["validation"]:
         if not finding.startswith("[INFO]"):

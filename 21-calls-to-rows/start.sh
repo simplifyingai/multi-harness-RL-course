@@ -158,7 +158,11 @@ start_engine() {
   wait_released "$ENGINE_PORT"
   local flags=""
   # The scripted engine has no model, so none of engine.py's flags.
-  if [ "$ENGINE_SCRIPT" = engine.py ]; then flags=$ENGINE_FLAGS; fi
+  if [ "$ENGINE_SCRIPT" = engine.py ]; then
+    flags=$ENGINE_FLAGS
+  elif [ -n "$ENGINE_FLAGS" ]; then
+    echo "  ENGINE_FLAGS ($ENGINE_FLAGS) are engine.py's: the scripted engine ignores them"
+  fi
   echo "starting the engine ($ENGINE_SCRIPT) on $ENGINE_URL${flags:+ ($flags)}"
   # The flags are split into words on purpose: there may be several.
   # shellcheck disable=SC2086

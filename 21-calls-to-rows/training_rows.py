@@ -5,9 +5,11 @@
 """What the project does with a rollout document: count it, then cut training rows.
 
 The capture proxy hands back one document per rollout (chapter 20). The
-project reads four things from it, and these are its functions, copied
-from ``mhrl/rollout.py`` and ``mhrl/training/common.py`` with the
-standard library only:
+project reads it in five steps, here as five functions with the standard
+library only: ``count_calls``, ``dedupe_shared_prefixes`` and
+``item_from_sequence`` copied from ``mhrl/rollout.py`` and
+``mhrl/training/common.py``, and the two steps ``run_rollout`` does inline
+(``n_sampled``, ``trainable_sequences``) lifted out of it unchanged:
 
 * ``count_calls``: the agent's model calls. Turns the proxy marked
   discarded are left out, and when any turn offered tools, only the turns

@@ -2,7 +2,7 @@
 # requires-python = ">=3.12"
 # dependencies = []
 # ///
-"""Claude Code 2.1.290, headless, pointed at the capture proxy: chapter 16's setup.
+"""Claude Code 2.1.290, headless, pointed at the capture proxy, in the sandbox.
 
 Chapter 16 ran the pinned Claude Code against a stand-in model; here it
 reaches the model through the capture proxy, as the project runs it
@@ -13,7 +13,7 @@ reaches the model through the capture proxy, as the project runs it
   refused if ``claude --version`` says anything else (``CLAUDE_BIN`` may
   name an install already on disk, such as chapter 16's);
 * an empty environment plus a private ``HOME``, ``TMPDIR`` and
-  ``CLAUDE_CONFIG_DIR`` under the run's folder: your own ``~/.claude`` is
+  ``CLAUDE_CONFIG_DIR`` in the run's state folder: your own ``~/.claude`` is
   never read, and no real key is used. ``ANTHROPIC_BASE_URL`` is the proxy
   and ``ANTHROPIC_API_KEY`` the session id, so every call lands in the
   session;
@@ -24,21 +24,32 @@ reaches the model through the capture proxy, as the project runs it
   adds each reply's raw stream events to the log, the only place it states
   the tokens of each reply (it changes nothing Claude Code sends: the
   proxy's tokens were the same with and without it);
+* the project's box: Bash runs whatever the model writes, without asking, so
+  Claude Code runs inside chapter 19's sandbox (``sandbox.py``): it may write
+  only to the run's task and state folders, read no credentials and no gold
+  answers, and reach nothing but this machine. When it stops, or overruns
+  its time limit, its whole process group is killed, so no command the model
+  started outlives the run (chapter 19's ``process.py`` sweeps further; a
+  command that leaves the group is still boxed);
 * ``CLAUDE_CODE_TOTAL_TOKENS_REMINDER`` is left to the caller: unset is
   Claude Code's default, ``off`` is the project's.
 
 ``Relay`` is a recording relay for the other side of the conversation: put
 between Claude Code and the proxy, it passes every request and answer
-through unchanged and keeps each request's JSON body, so a script can show
-what Claude Code itself sent before the proxy rewrote it. Only Python's
-standard library is needed.
+through and keeps each request's path and JSON body, so a script can show
+what Claude Code itself sent before the proxy rewrote it. It reads each
+answer whole before passing it on (with its status and headers), so a
+streamed answer arrives in one piece rather than event by event. Only
+Python's standard library is needed.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -50,18 +61,25 @@ from pathlib import Path
 from typing import Any
 
 from lfm_files import chapter_home
+from sandbox import SandboxError, sandbox_command, sandbox_params
 
 CLAUDE_VERSION = "2.1.290"
 CLAUDE_PACKAGE = f"@anthropic-ai/claude-code@{CLAUDE_VERSION}"
 NPM_REGISTRY = "https://registry.npmjs.org/"
 INSTALL_FOLDER = "claude-code"
 PATH_FILE = "path.txt"  # where the installed binary's path is kept
+NPM_SETTINGS_FILE = "npmrc"  # empty: your own npm settings are never read
+NPM_CACHE_FOLDER = "npm-cache"
 CLAUDE_BIN_ENV = "CLAUDE_BIN"  # an install already on disk, to skip npx
 REMINDER_ENV = "CLAUDE_CODE_TOTAL_TOKENS_REMINDER"
 REMINDER_OFF = "off"
 MODEL_NAME = "lfm2.5-2.6b"  # the name the engine serves, as the project passes it
+TOOLS = "Bash"  # the one tool, as the project offers it
+PERMISSION_MODE = "bypassPermissions"  # Bash runs without asking: the box is the guard
 RUN_TIMEOUT_S = 900  # one rollout; the real model can take minutes per call
+VERSION_TIMEOUT_S = 60
 INSTALL_TIMEOUT_S = 900
+STOP_WAIT_S = 10  # after the time limit, how long to wait for the group to die
 API_TIMEOUT_MS = 600_000  # the project's REQUEST_TIMEOUT_MS
 MAX_OUTPUT_TOKENS = 1_024  # the project's max_completion_tokens
 BASH_OUTPUT_MAX_CHARS = 4_000
@@ -71,12 +89,18 @@ FLAG_SETTINGS = {
     "bashOutputMaxChars": BASH_OUTPUT_MAX_CHARS,
 }
 SAFE_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+SHELL = "/bin/bash"
+LOCALE = "en_US.UTF-8"
+PLAIN_TERMINAL = "dumb"  # no colours, no cursor tricks in the log
 ENABLED = "1"
 STREAM_FILE = "stream.jsonl"  # what Claude Code printed
 STDERR_FILE = "stderr.txt"
-TASK_FOLDER = "task"
+TASK_FOLDER = "task"  # Claude Code's working folder: data.db, answer.txt
+STATE_FOLDER = "state"  # its private HOME, TMPDIR and config
+STATE_PARTS = ("home", "tmp", "config")
 RELAY_TIMEOUT_S = 600
 BAD_GATEWAY = 502  # what the relay answers when the proxy cannot be reached
+TEXT_PLAIN = "text/plain"
 # Headers a relay must not copy: they describe one hop, not the message.
 HOP_HEADERS = frozenset(
     {"host", "content-length", "connection", "accept-encoding", "transfer-encoding"}
@@ -84,7 +108,7 @@ HOP_HEADERS = frozenset(
 
 
 class ClaudeNotInstalledError(Exception):
-    """Raised when the pinned Claude Code cannot be found or installed."""
+    """Raised when the pinned Claude Code cannot be found, run or installed."""
 
 
 @dataclass(frozen=True)
@@ -92,8 +116,8 @@ class ClaudeRun:
     """One finished Claude Code run.
 
     Attributes:
-        folder: The run's folder (task/, config/, home/, tmp/, the logs).
-        exit_code: Claude Code's exit status (None when it was stopped).
+        folder: The run's folder (task/, state/, the logs).
+        exit_code: Claude Code's exit status (None when the time limit hit).
         seconds: How long it ran.
     """
 
@@ -110,6 +134,19 @@ class ClaudeRun:
     def stream(self) -> Path:
         """Claude Code's stream-json log."""
         return self.folder / STREAM_FILE
+
+
+@dataclass(frozen=True)
+class RelayedRequest:
+    """One request the relay passed on.
+
+    Attributes:
+        path: Such as ``/v1/messages``.
+        body: Its JSON body (an object).
+    """
+
+    path: str
+    body: dict[str, Any]
 
 
 def install_folder() -> Path:
@@ -129,21 +166,43 @@ def installed_version(binary: Path) -> str:
 
     Returns:
         Its first word, such as ``2.1.290``.
+
+    Raises:
+        ClaudeNotInstalledError: If it cannot be run, or does not answer.
     """
-    answer = subprocess.run(
-        [str(binary), "--version"],
-        env={"PATH": SAFE_PATH, "HOME": str(install_folder())},
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-        stdin=subprocess.DEVNULL,
-    )
+    try:
+        answer = subprocess.run(
+            [str(binary), "--version"],
+            env={"PATH": SAFE_PATH, "HOME": str(install_folder())},
+            capture_output=True,
+            text=True,
+            timeout=VERSION_TIMEOUT_S,
+            check=False,
+            stdin=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ClaudeNotInstalledError(f"cannot run {binary}: {error}") from error
     return answer.stdout.split(" ", 1)[0].strip()
 
 
+def recorded_binary(path_file: Path) -> Path | None:
+    """Read the binary an earlier install recorded, if it is still there.
+
+    Args:
+        path_file: The install's ``path.txt``.
+
+    Returns:
+        The executable, or None when nothing was recorded or npx's cache no
+        longer holds it.
+    """
+    if not path_file.is_file():
+        return None
+    binary = Path(path_file.read_text(encoding="utf-8").strip())
+    return binary if binary.is_file() else None
+
+
 def find_claude(install: bool = True) -> Path:
-    """Find the pinned Claude Code, installing it with npx when asked.
+    """Find the pinned Claude Code, installing it with npx when needed.
 
     Args:
         install: False to only look.
@@ -152,25 +211,26 @@ def find_claude(install: bool = True) -> Path:
         The ``claude`` executable, at version ``CLAUDE_VERSION``.
 
     Raises:
-        ClaudeNotInstalledError: If it is missing, or another version.
+        ClaudeNotInstalledError: If it is missing, cannot run, or is another
+            version.
     """
     named = os.environ.get(CLAUDE_BIN_ENV)
     folder = install_folder()
-    path_file = folder / PATH_FILE
     if named:
         binary = Path(named)
-    elif path_file.is_file():
-        binary = Path(path_file.read_text(encoding="utf-8").strip())
-    elif install:
-        binary = npx_install(folder)
+        if not binary.is_file():
+            raise ClaudeNotInstalledError(f"{CLAUDE_BIN_ENV}={binary} is not a file")
     else:
-        raise ClaudeNotInstalledError(f"no Claude Code under {folder}")
-    if not binary.is_file():
-        raise ClaudeNotInstalledError(f"{binary} is not a file")
+        found = recorded_binary(folder / PATH_FILE)
+        if found is None and not install:
+            raise ClaudeNotInstalledError(f"no Claude Code under {folder}")
+        # Nothing recorded, or npx's cache was cleaned since: install again.
+        binary = found or npx_install(folder)
     version = installed_version(binary)
     if version != CLAUDE_VERSION:
-        reason = f"{binary} reports {version!r}; this chapter is pinned to "
-        raise ClaudeNotInstalledError(reason + CLAUDE_VERSION)
+        raise ClaudeNotInstalledError(
+            f"{binary} reports {version!r}; this chapter is pinned to {CLAUDE_VERSION}"
+        )
     return binary
 
 
@@ -190,27 +250,33 @@ def npx_install(folder: Path) -> Path:
     if npx is None:
         raise ClaudeNotInstalledError("npx is not installed (it comes with Node.js)")
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / "npmrc").write_text("", encoding="utf-8")  # your npm settings unread
+    (folder / NPM_SETTINGS_FILE).write_text("", encoding="utf-8")
+    # Only what npx needs: no tokens or settings from your own environment.
     env = {
-        **os.environ,
-        "npm_config_userconfig": str(folder / "npmrc"),
-        "npm_config_cache": str(folder / "npm-cache"),
+        "PATH": os.environ.get("PATH", SAFE_PATH),
+        "HOME": str(folder),
+        "npm_config_userconfig": str(folder / NPM_SETTINGS_FILE),
+        "npm_config_cache": str(folder / NPM_CACHE_FOLDER),
         "npm_config_registry": NPM_REGISTRY,
         "npm_config_update_notifier": "false",
         "npm_config_fund": "false",
     }
     print(f"installing {CLAUDE_PACKAGE} with npx into {folder}", flush=True)
-    answer = subprocess.run(
-        [npx, "--yes", "--package", CLAUDE_PACKAGE, "-c", "command -v claude"],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=INSTALL_TIMEOUT_S,
-        check=False,
-    )
-    if answer.returncode != 0 or not answer.stdout.strip():
+    try:
+        answer = subprocess.run(
+            [npx, "--yes", "--package", CLAUDE_PACKAGE, "-c", "command -v claude"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=INSTALL_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ClaudeNotInstalledError(f"npx failed: {error}") from error
+    lines = [line.strip() for line in answer.stdout.splitlines() if line.strip()]
+    if answer.returncode != 0 or not lines:
         raise ClaudeNotInstalledError(f"npx failed: {answer.stderr.strip()[-300:]}")
-    binary = Path(answer.stdout.strip())
+    binary = Path(lines[-1])  # `command -v claude` prints the path last
     (folder / PATH_FILE).write_text(f"{binary}\n", encoding="utf-8")
     return binary
 
@@ -221,7 +287,7 @@ def clean_environment(
     """Build the only environment Claude Code gets.
 
     Args:
-        folder: The run's folder (home/, tmp/ and config/ are made in it).
+        folder: The run's folder (its state folder holds home/, tmp/, config/).
         base_url: The proxy's root (Claude Code adds ``/v1/messages``).
         api_key: The capture session's id.
         reminder: ``CLAUDE_CODE_TOTAL_TOKENS_REMINDER``, or None to leave it
@@ -230,24 +296,25 @@ def clean_environment(
     Returns:
         The environment.
     """
+    state = folder / STATE_FOLDER
     user = os.environ.get("USER", "learner")
     env = {
         "PATH": SAFE_PATH,
-        "HOME": str(folder / "home"),
-        "TMPDIR": str(folder / "tmp"),
+        "HOME": str(state / "home"),
+        "TMPDIR": str(state / "tmp"),
         "USER": user,
         "LOGNAME": user,
-        "SHELL": "/bin/bash",
-        "LANG": "en_US.UTF-8",
-        "TERM": "dumb",
+        "SHELL": SHELL,
+        "LANG": LOCALE,
+        "TERM": PLAIN_TERMINAL,
         "NO_COLOR": ENABLED,
         "ANTHROPIC_BASE_URL": base_url,
         "ANTHROPIC_API_KEY": api_key,
         "ANTHROPIC_MODEL": MODEL_NAME,
         # Any "small fast model" call goes to the same model, as in the project.
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": MODEL_NAME,
-        "CLAUDE_CONFIG_DIR": str(folder / "config"),
-        "CLAUDE_CODE_TMPDIR": str(folder / "tmp"),
+        "CLAUDE_CONFIG_DIR": str(state / "config"),
+        "CLAUDE_CODE_TMPDIR": str(state / "tmp"),
         "CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(MAX_OUTPUT_TOKENS),
         "API_TIMEOUT_MS": str(API_TIMEOUT_MS),
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": ENABLED,
@@ -275,14 +342,14 @@ def command(binary: Path, instruction: str) -> list[str]:
         "-p",
         instruction,
         "--tools",
-        "Bash",
+        TOOLS,
         "--strict-mcp-config",
         "--setting-sources",
         "",
         "--settings",
         json.dumps(FLAG_SETTINGS),
         "--permission-mode",
-        "bypassPermissions",
+        PERMISSION_MODE,
         "--disable-slash-commands",
         "--no-session-persistence",
         "--model",
@@ -304,12 +371,49 @@ def prepare_run(folder: Path, database: Path) -> Path:
     Returns:
         The task folder Claude Code works in.
     """
-    shutil.rmtree(folder, ignore_errors=True)
-    for name in (TASK_FOLDER, "config", "home", "tmp"):
-        (folder / name).mkdir(parents=True)
+    if folder.exists():
+        shutil.rmtree(folder)  # a failure here is shown, not hidden
     task = folder / TASK_FOLDER
+    task.mkdir(parents=True)
+    for part in STATE_PARTS:
+        (folder / STATE_FOLDER / part).mkdir(parents=True)
     shutil.copy(database, task / "data.db")
     return task
+
+
+def boxed_command(binary: Path, folder: Path, instruction: str) -> list[str]:
+    """Wrap the command line in the sandbox, writable only in the run's folders.
+
+    Args:
+        binary: The ``claude`` executable.
+        folder: The run's folder.
+        instruction: The task.
+
+    Returns:
+        The argv, ``sandbox-exec`` first.
+
+    Raises:
+        ClaudeNotInstalledError: If the box cannot be applied (then nothing runs).
+    """
+    try:
+        params = sandbox_params(
+            workdir=folder / TASK_FOLDER, state_dir=folder / STATE_FOLDER
+        )
+        return sandbox_command(command(binary, instruction), params=params)
+    except SandboxError as error:
+        raise ClaudeNotInstalledError(f"no sandbox, so no run: {error}") from error
+
+
+def kill_group(process: subprocess.Popen) -> None:
+    """Kill a run's whole process group: Claude Code and every command it started.
+
+    Args:
+        process: The run, started in a session of its own.
+    """
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass  # the group is already gone
 
 
 def run_claude(
@@ -320,7 +424,7 @@ def run_claude(
     api_key: str,
     reminder: str | None,
 ) -> ClaudeRun:
-    """Run Claude Code once, headless, in a prepared run folder.
+    """Run Claude Code once, headless and boxed, in a prepared run folder.
 
     Args:
         binary: The ``claude`` executable.
@@ -332,27 +436,37 @@ def run_claude(
 
     Returns:
         The finished run; its log is ``stream.jsonl`` in the folder.
+
+    Raises:
+        ClaudeNotInstalledError: If the sandbox cannot be applied.
     """
+    argv = boxed_command(binary, folder, instruction)
     env = clean_environment(folder, base_url, api_key, reminder)
     started = time.perf_counter()
+    exit_code: int | None = None
     with (
         (folder / STREAM_FILE).open("w", encoding="utf-8") as out,
         (folder / STDERR_FILE).open("w", encoding="utf-8") as err,
     ):
+        # Its own session, so one signal reaches every process it starts.
+        process = subprocess.Popen(
+            argv,
+            cwd=folder / TASK_FOLDER,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=out,
+            stderr=err,
+            start_new_session=True,
+        )
         try:
-            done = subprocess.run(
-                command(binary, instruction),
-                cwd=folder / TASK_FOLDER,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=out,
-                stderr=err,
-                timeout=RUN_TIMEOUT_S,
-                check=False,
-            )
-            exit_code: int | None = done.returncode
-        except subprocess.TimeoutExpired:  # subprocess.run has killed it
+            exit_code = process.wait(timeout=RUN_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
             exit_code = None
+        finally:
+            kill_group(process)  # also any background command left running
+            # A process killed in its sleep is reaped at once; never wait forever.
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=STOP_WAIT_S)
     return ClaudeRun(folder, exit_code, time.perf_counter() - started)
 
 
@@ -362,13 +476,12 @@ class Relay:
 
     Attributes:
         upstream: The proxy's root.
-        requests: Every POST body received, as JSON, in order.
+        requests: Every request with a JSON object body, in order.
     """
 
     upstream: str
-    requests: list[dict[str, Any]] = field(default_factory=list)
+    requests: list[RelayedRequest] = field(default_factory=list)
     server: ThreadingHTTPServer | None = None
-    thread: threading.Thread | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def start(self) -> str:
@@ -380,20 +493,46 @@ class Relay:
         relay = self
 
         class Handler(BaseHTTPRequestHandler):
+            """Hands every request to the relay."""
+
             def do_GET(self) -> None:  # noqa: N802 - the name http.server calls
+                """Relay a GET (no body)."""
                 relay.forward(self, None)
 
             def do_POST(self) -> None:  # noqa: N802
+                """Relay a POST with its body."""
                 size = int(self.headers.get("Content-Length") or 0)
                 relay.forward(self, self.rfile.read(size))
 
             def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
-                """Stay quiet: the relay is not part of the output."""
+                """Stay quiet: the relay is not part of the output.
+
+                Args:
+                    format: The message's format.
+                    *args: Its values.
+                """
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self.thread.start()
+        thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        thread.start()
         return f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def keep(self, path: str, body: bytes | None) -> None:
+        """Keep a request whose body is a JSON object.
+
+        Args:
+            path: The request's path.
+            body: Its body, or None.
+        """
+        if not body:
+            return
+        try:
+            found = json.loads(body)
+        except ValueError:  # not JSON (or not UTF-8): relayed, not kept
+            return
+        if isinstance(found, dict):
+            with self.lock:
+                self.requests.append(RelayedRequest(path, found))
 
     def forward(self, handler: BaseHTTPRequestHandler, body: bytes | None) -> None:
         """Pass one request to the proxy and its answer back, keeping the body.
@@ -402,12 +541,7 @@ class Relay:
             handler: The request Claude Code made.
             body: Its body, or None for a GET.
         """
-        if body:
-            try:
-                with self.lock:
-                    self.requests.append(json.loads(body))
-            except json.JSONDecodeError:
-                pass  # not JSON: relayed, not kept
+        self.keep(handler.path, body)
         headers = {
             name: value
             for name, value in handler.headers.items()
@@ -421,14 +555,17 @@ class Relay:
         )
         try:
             with urllib.request.urlopen(request, timeout=RELAY_TIMEOUT_S) as answer:
-                status, kind, data = answer.status, answer.headers, answer.read()
+                status, data = answer.status, answer.read()
+                kept = answer.headers.items()
         except urllib.error.HTTPError as error:  # the proxy answered: a refusal
-            status, kind, data = error.code, error.headers, error.read()
+            status, kept, data = error.code, error.headers.items(), error.read()
         except (urllib.error.URLError, OSError) as error:  # nobody answered
-            status, kind = BAD_GATEWAY, {"Content-Type": "text/plain"}
+            status, kept = BAD_GATEWAY, [("Content-Type", TEXT_PLAIN)]
             data = f"relay: cannot reach {self.upstream}: {error}".encode()
         handler.send_response(status)
-        handler.send_header("Content-Type", kind.get("Content-Type", "text/plain"))
+        for name, value in kept:  # Retry-After, request ids, the content type...
+            if name.lower() not in HOP_HEADERS:
+                handler.send_header(name, value)
         handler.send_header("Content-Length", str(len(data)))
         handler.end_headers()
         handler.wfile.write(data)

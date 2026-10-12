@@ -39,7 +39,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +56,15 @@ from rollout_view import (
     print_rows,
     print_stats,
 )
-from scripted_replies import Reply, ScriptClient, ScriptError, answer_reply, call_reply
+from scripted_replies import (
+    MURCIA_COMMAND,
+    TABLES_COMMAND,
+    Reply,
+    ScriptClient,
+    ScriptError,
+    answer_reply,
+    call_reply,
+)
 from tasks import Task, find_task, prepare_workdir
 from tiny_harness_http import (
     ASSISTANT,
@@ -88,9 +96,8 @@ OPENAI_ROOT = "/v1"
 BROKEN_PATH = "/broken"  # the scripted engine's second, broken engine
 TRAIN_TEMPERATURE = 1.0  # what the harness asks; a train session pins it anyway
 # The four steps every case takes, as the scripted model writes them.
-MURCIA = "sqlite3 data.db \"SELECT COUNT(*) FROM patients WHERE city = 'Murcia'\""
-TABLES = call_reply("sqlite3 data.db .tables")
-COUNT = call_reply(MURCIA, think="Count them.")
+TABLES = call_reply(TABLES_COMMAND)
+COUNT = call_reply(MURCIA_COMMAND, think="Count them.")
 WRITE = call_reply('echo "30" > answer.txt', think="Write it.")
 ANSWER = answer_reply("I wrote 30 to answer.txt.")
 # Replies a harness receives and then throws away (a retried call).
@@ -113,6 +120,8 @@ SUMMARY_HEAD = (
     "Summary of the work so far (the earlier messages were removed to save room):"
 )
 RULE = "━━"
+EVENT_CHARS = 60  # a harness event's reply is cut to this many characters
+CASE_WIDTH = 14  # the case column of the closing table
 # The project's figure for shared-prefix repeats, quoted with its source.
 DRY_RUN_QUOTE = (
     "the project says: '11.8% of the dry run's trainable tokens were such",
@@ -120,6 +129,7 @@ DRY_RUN_QUOTE = (
     "docstring of dedupe_shared_prefixes; its dry run is runs/dry/grpo)",
 )
 DRY_RUN = "dry-run"
+DRY_RUN_CHOICES = ("all", "retry", DRY_RUN)  # the choices that print it
 
 
 @dataclass(frozen=True)
@@ -207,19 +217,17 @@ GROUPS = {"retry": ("retry", "retry-last")}
 CHOICES = ("all", *(c.name for c in CASES if c.name != "retry-last"), DRY_RUN)
 
 
-@dataclass
+@dataclass(frozen=True)
 class HarnessRun:
     """What the harness did in one case.
 
     Attributes:
         events: One line per request (or other step), to print.
-        calls: Agent calls whose reply the harness used.
         grade: The verdict on answer.txt.
     """
 
-    events: list[str] = field(default_factory=list)
-    calls: int = 0
-    grade: Grade | None = None
+    events: list[str]
+    grade: Grade
 
 
 @dataclass(frozen=True)
@@ -237,6 +245,24 @@ class Outcome:
     trainer: dict[str, Any]
 
 
+def command_of(call: dict[str, Any]) -> str:
+    """Read the command out of an OpenAI tool call.
+
+    Args:
+        call: ``{"function": {"name", "arguments"}}``, arguments as JSON text.
+
+    Returns:
+        The ``command`` argument, or the raw arguments when there is none.
+    """
+    raw = (call.get("function") or {}).get("arguments") or ""
+    try:
+        arguments = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return str(raw)
+    command = arguments.get("command") if isinstance(arguments, dict) else None
+    return command if isinstance(command, str) else str(raw)
+
+
 def reply_text(message: dict[str, Any]) -> str:
     """Say what a reply held: its tool call, else its text.
 
@@ -248,13 +274,9 @@ def reply_text(message: dict[str, Any]) -> str:
     """
     calls = message.get("tool_calls") or []
     if calls:
-        function = calls[0]["function"]
-        try:
-            command = json.loads(function["arguments"]).get("command")
-        except (json.JSONDecodeError, AttributeError):
-            command = function["arguments"]
-        return clip(f"{function['name']}: {command}", 60)
-    return clip(f"text: {message.get('content')}", 60)
+        name = (calls[0].get("function") or {}).get("name")
+        return clip(f"{name}: {command_of(calls[0])}", EVENT_CHARS)
+    return clip(f"text: {message.get('content')}", EVENT_CHARS)
 
 
 def with_changing_line(messages: list[dict[str, Any]], base: str, left: int) -> None:
@@ -313,7 +335,7 @@ def run_harness(chat: Chat, task: Task, workdir: Path, quirks: Quirks) -> Harnes
     Returns:
         What the harness did, graded.
     """
-    run = HarnessRun()
+    events: list[str] = []
     tools = [bash_schema()]
     messages = start_messages(task)
     base_system = messages[0]["content"]
@@ -332,13 +354,12 @@ def run_harness(chat: Chat, task: Task, workdir: Path, quirks: Quirks) -> Harnes
         response = chat(body)
         if number == quirks.retry_call:
             dropped = reply_text(response["choices"][0]["message"])
-            run.events.append(f"call {number}  {dropped}   <- abandoned: sent again")
+            events.append(f"call {number}  {dropped}   <- abandoned: sent again")
             response = chat(body)  # the same request, once more
         usage = response["usage"]
         used += usage["prompt_tokens"] + usage["completion_tokens"]
         message = response["choices"][0]["message"]
-        run.calls += 1
-        run.events.append(f"call {number}  {reply_text(message)}")
+        events.append(f"call {number}  {reply_text(message)}")
         tool_calls = message.get("tool_calls") or []
         kept = {"role": ASSISTANT, "content": message.get("content")}
         if tool_calls:
@@ -347,21 +368,19 @@ def run_harness(chat: Chat, task: Task, workdir: Path, quirks: Quirks) -> Harnes
         for call in tool_calls:
             result = execute(call, tools, workdir)
             messages.append(tool_message(call["id"], result.output))
-            command = json.loads(call["function"]["arguments"]).get("command", "")
-            observations.append((command, result.output))
+            observations.append((command_of(call), result.output))
         if not tool_calls:
             break  # the final answer
         if number == quirks.compact_after:
             messages = [*start_messages(task), summary_message(observations)]
-            run.events.append(
+            events.append(
                 f"compact the history is replaced: {len(messages)} messages, "
                 "the last a summary"
             )
         if number == quirks.side_call_after:
             title = side_call(chat, task)["choices"][0]["message"]
-            run.events.append(f"side    no tools · {reply_text(title)}")
-    run.grade = grade(task, workdir)
-    return run
+            events.append(f"side    no tools · {reply_text(title)}")
+    return HarnessRun(events, grade(task, workdir))
 
 
 def proxy_upstream(client: CaptureClient) -> str:
@@ -534,8 +553,8 @@ def print_table(outcomes: list[Outcome]) -> None:
     """
     print(f"\n{RULE} every case solved the same task the same way")
     print(
-        f"{INDENT}{'case':<14} {'grade':<8} turns roots rows row-tokens mask-1 "
-        "trainable n_calls n_sampled"
+        f"{INDENT}{'case':<{CASE_WIDTH}} {'grade':<8} turns roots rows "
+        "row-tokens mask-1 trainable n_calls n_sampled"
     )
     for outcome in outcomes:
         doc = outcome.trainer
@@ -543,30 +562,57 @@ def print_table(outcomes: list[Outcome]) -> None:
         verdict = "correct" if outcome.grade.correct else "wrong"
         row_tokens = sum(len(row["input_ids"]) for row in doc["sequences"])
         print(
-            f"{INDENT}{outcome.case.name:<14} {verdict:<8} {stats['n_turns']:>5} "
-            f"{stats['n_roots']:>5} {stats['n_sequences']:>4} {row_tokens:>10,} "
+            f"{INDENT}{outcome.case.name:<{CASE_WIDTH}} {verdict:<8} "
+            f"{stats['n_turns']:>5} {stats['n_roots']:>5} {stats['n_sequences']:>4} "
+            f"{row_tokens:>10,} "
             f"{stats['n_trainable_tokens']:>6,} {str(doc['trainable']).lower():>9} "
             f"{count_calls(doc):>7} {n_sampled(doc):>9,}"
         )
 
 
-def remeasure_dry_run(path: Path) -> None:
-    """Re-measure the project's figure: mask-1 tokens the dedup removes.
+@dataclass(frozen=True)
+class DryRun:
+    """A project ``rollouts.jsonl``, read before any case runs.
+
+    Attributes:
+        path: The file.
+        records: Its ``RolloutRecord`` lines (objects with ``sequences``).
+    """
+
+    path: Path
+    records: list[dict[str, Any]]
+
+
+def read_dry_run(path: Path) -> DryRun:
+    """Read a project ``rollouts.jsonl``, refusing anything else.
 
     Args:
-        path: A project ``rollouts.jsonl`` (``RolloutRecord`` lines, with
-            their trainable sequences).
+        path: The file.
+
+    Returns:
+        Its records.
 
     Raises:
-        SystemExit: If the file cannot be read.
+        SystemExit: If it cannot be read, or a line is not a record.
     """
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
         records = [json.loads(line) for line in lines if line.strip()]
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, ValueError) as error:
         raise SystemExit(f"cannot read {path}: {error}") from error
+    if not all(isinstance(r, dict) and "sequences" in r for r in records):
+        raise SystemExit(f"{path} is not a project rollouts.jsonl (no sequences)")
+    return DryRun(path, records)
+
+
+def remeasure_dry_run(dry_run: DryRun) -> None:
+    """Re-measure the project's figure: mask-1 tokens the dedup removes.
+
+    Args:
+        dry_run: The project's rollouts, with their trainable sequences.
+    """
     before = after = forked = repeats_unrewarded = 0
-    for record in records:
+    for record in dry_run.records:
         rows = record.get("sequences") or []
         kept = trained_tokens(rows)
         left = trained_tokens(dedupe_shared_prefixes(rows))
@@ -579,24 +625,24 @@ def remeasure_dry_run(path: Path) -> None:
     repeats = before - after
     share = repeats / before if before else 0.0
     print(
-        f"{INDENT}re-measured on {path}:\n"
-        f"{INDENT}{len(records)} rollouts, {forked} with rows that share trained "
-        f"tokens · {before:,} mask-1 tokens, {repeats:,} of them repeats "
+        f"{INDENT}re-measured on {dry_run.path}:\n"
+        f"{INDENT}{len(dry_run.records)} rollouts, {forked} with rows that share "
+        f"trained tokens · {before:,} mask-1 tokens, {repeats:,} of them repeats "
         f"({share:.1%}), {repeats_unrewarded:,} in rollouts with reward 0"
     )
 
 
-def print_dry_run(path: Path | None) -> None:
-    """Print the project's shared-prefix figure, and re-measure it when given its file.
+def print_dry_run(dry_run: DryRun | None) -> None:
+    """Print the project's shared-prefix figure, re-measured when its file is given.
 
     Args:
-        path: A project ``rollouts.jsonl``, or None to only quote the figure.
+        dry_run: A project's rollouts, or None to only quote the figure.
     """
     print(f"\n{RULE} {DRY_RUN} · shared-prefix repeats in the project's own run")
     for line in DRY_RUN_QUOTE:
         print(f"{INDENT}{line}")
-    if path is not None:
-        remeasure_dry_run(path)
+    if dry_run is not None:
+        remeasure_dry_run(dry_run)
 
 
 def parse_args() -> argparse.Namespace:
@@ -639,6 +685,11 @@ def main() -> None:
     args = parse_args()
     painter = Painter(args.color)
     cases = chosen_cases(args.case)
+    shows_dry_run = args.case in DRY_RUN_CHOICES
+    # Read first: a bad file should stop the script before any case runs.
+    dry_run = read_dry_run(args.dry_run) if args.dry_run else None
+    if dry_run is not None and not shows_dry_run:
+        print(f"note: --dry-run is printed with {', '.join(DRY_RUN_CHOICES)} only")
     outcomes = []
     if cases:
         client = CaptureClient(args.proxy_url)
@@ -653,12 +704,12 @@ def main() -> None:
                 outcomes.append(run_case(client, engine_url, case, painter, number))
             except (ProxyError, ScriptError) as error:
                 raise SystemExit(f"case {case.name}: {error}") from error
-            if case.name == "retry-last" and args.case in ("all", "retry"):
-                print_dry_run(args.dry_run)
+            if case.name == "retry-last" and shows_dry_run:
+                print_dry_run(dry_run)
         saved = rollout_path(LABEL, cases[-1].name).parent
         print(f"\nsaved: every case's full rollout document in {short_path(saved)}")
     if args.case == DRY_RUN:
-        print_dry_run(args.dry_run)
+        print_dry_run(dry_run)
     if len(outcomes) > 1:
         print_table(outcomes)
 

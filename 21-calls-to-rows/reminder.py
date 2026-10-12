@@ -8,8 +8,9 @@ Claude Code 2.1.290 tells the model how much of its budget is left, in a
 note written ``<total_tokens>N tokens left</total_tokens>``. The project
 turns it off (``CLAUDE_CODE_TOTAL_TOKENS_REMINDER=off``) because, it says,
 the note splits every rollout into one row per call. This script runs the
-same task twice through the proxy, once with Claude Code's default and once
-with the note off, and prints for each:
+same task three times through the proxy: with Claude Code's default (the
+variable unset: the number counts down), with ``fixed`` (the number never
+changes) and with ``off``, and prints for each:
 
 * what Claude Code sent, call by call: a relay between Claude Code and the
   proxy records each request as it left Claude Code (which messages, and
@@ -44,8 +45,10 @@ from claude_code import (
     CLAUDE_VERSION,
     REMINDER_ENV,
     REMINDER_OFF,
+    TOOLS,
     ClaudeNotInstalledError,
     Relay,
+    RelayedRequest,
     find_claude,
     prepare_run,
     run_claude,
@@ -62,7 +65,15 @@ from rollout_view import (
     print_rows,
     print_stats,
 )
-from scripted_replies import ScriptClient, ScriptError, answer_reply, call_reply
+from scripted_replies import (
+    MURCIA_COMMAND,
+    TABLES_COMMAND,
+    NotScriptedError,
+    ScriptClient,
+    ScriptError,
+    answer_reply,
+    call_reply,
+)
 from tasks import DATA_DIR, Task, find_task, task_instruction
 from training_rows import count_calls, n_sampled
 
@@ -72,18 +83,20 @@ RUNS_FOLDER = "runs"
 RUN_PREFIX = "reminder-"
 ROLLOUT_FILE = "rollout.json"  # the proxy's record, every row and message
 SENT_FILE = "sent.jsonl"  # what Claude Code sent, request by request
-SETTINGS = {"default": None, "off": REMINDER_OFF}  # None: the variable unset
+# The note's settings, in the order they run (None: the variable unset).
+# "fixed" always shows 5000000: does the number's change split the rollout?
+SETTINGS = {"default": None, "fixed": "fixed", "off": REMINDER_OFF}
+ALL = "all"
 NOTE = re.compile(r"<total_tokens>(\d+) tokens left</total_tokens>")
-MESSAGES_PATH_PART = "/messages"
+MESSAGES_PATH = "/v1/messages"  # the model calls (not .../count_tokens)
 MARK = "*"  # after a message that carries a note
 DIFF_CHARS = 70
 RULE = "━━"
-TOOL = "Bash"  # Claude Code's one tool, as the scripted model must name it
-MURCIA = "sqlite3 data.db \"SELECT COUNT(*) FROM patients WHERE city = 'Murcia'\""
+# The scripted model's replies: Claude Code's tool is named Bash.
 SCRIPTED = (
-    call_reply("sqlite3 data.db .tables", tool=TOOL),
-    call_reply(MURCIA, tool=TOOL, think="Count them."),
-    call_reply("echo 30 > answer.txt", tool=TOOL, think="Write it."),
+    call_reply(TABLES_COMMAND, tool=TOOLS),
+    call_reply(MURCIA_COMMAND, tool=TOOLS, think="Count them."),
+    call_reply("echo 30 > answer.txt", tool=TOOLS, think="Write it."),
     answer_reply("30 patients live in Murcia; answer.txt holds 30."),
 )
 
@@ -93,7 +106,7 @@ class Result:
     """One setting's run, for the closing table.
 
     Attributes:
-        setting: ``default`` or ``off``.
+        setting: ``default``, ``fixed`` or ``off``.
         grade: The verdict on answer.txt.
         trainer: The rollout document the trainer gets.
     """
@@ -167,14 +180,33 @@ def all_notes(messages: list[dict[str, Any]], system: Any = None) -> list[str]:
     return found
 
 
-def print_sent(requests: list[dict[str, Any]]) -> None:
+def model_calls(requests: list[RelayedRequest]) -> list[dict[str, Any]]:
+    """Keep the requests that asked the model for a reply.
+
+    Args:
+        requests: Everything the relay kept.
+
+    Returns:
+        The bodies sent to ``/v1/messages`` with a list of messages.
+    """
+    return [
+        request.body
+        for request in requests
+        if request.path.split("?", 1)[0] == MESSAGES_PATH
+        and isinstance(request.body.get("messages"), list)
+    ]
+
+
+def print_sent(requests: list[RelayedRequest]) -> None:
     """Print what Claude Code sent, call by call (the relay's record).
 
     Args:
-        requests: The JSON bodies Claude Code POSTed, in order.
+        requests: Everything the relay kept, in order.
     """
-    calls = [r for r in requests if isinstance(r.get("messages"), list)]
-    print(f"what Claude Code sent ({len(calls)} requests, recorded before the proxy)")
+    calls = model_calls(requests)
+    others = len(requests) - len(calls)
+    extra = f"; {others} other requests" if others else ""
+    print(f"what Claude Code sent ({len(calls)} model calls{extra}, before the proxy)")
     for number, body in enumerate(calls, start=1):
         system = body.get("system")
         blocks = len(system) if isinstance(system, list) else int(bool(system))
@@ -232,6 +264,7 @@ def system_change(before: str, after: str) -> str:
 
 def run_setting(
     setting: str,
+    task: Task,
     client: CaptureClient,
     binary: Path,
     engine: ScriptClient | None,
@@ -240,7 +273,8 @@ def run_setting(
     """Run Claude Code once with one setting of the note, and print what happened.
 
     Args:
-        setting: ``default`` or ``off``.
+        setting: ``default``, ``fixed`` or ``off``.
+        task: The task.
         client: The proxy's session client.
         binary: The pinned ``claude``.
         engine: The scripted engine's remote control, or None for the model.
@@ -248,17 +282,20 @@ def run_setting(
 
     Returns:
         The run's numbers.
+
+    Raises:
+        ClaudeNotInstalledError: If the sandbox cannot be applied.
     """
     value = SETTINGS[setting]
     shown = f"{REMINDER_ENV}={value}"
     if value is None:
         shown = f"{REMINDER_ENV} unset (the default)"
     print(painter.paint(f"\n{RULE} {shown}", "head"))
-    task = find_task(DEFAULT_TASK)
     folder = chapter_home() / RUNS_FOLDER / f"{RUN_PREFIX}{setting}"
     prepare_run(folder, DATA_DIR / task.db_file)
     session = client.open_session(PURPOSE_TRAIN, {"task_id": task.task_id})
     relay = Relay(client.proxy_url)
+    unused = 0
     try:
         if engine is not None:
             engine.clear()
@@ -267,6 +304,9 @@ def run_setting(
         run = run_claude(
             binary, folder, task_instruction(task), base_url, session.session_id, value
         )
+        if engine is not None:
+            unused = engine.state()["queued"]
+            engine.clear()
         trainer = client.rollout(session.session_id)
         full = client.rollout(
             session.session_id, include_discarded=True, include_messages=True
@@ -285,6 +325,8 @@ def run_setting(
         f"{'correct' if verdict.correct else 'wrong'} (answer.txt "
         f"{verdict.submitted!r})"
     )
+    if unused:  # the conversation did not go as scripted
+        print(f"{INDENT}note: {unused} scripted replies were never asked for")
     print_sent(relay.requests)
     print_received(full)
     print_graph(full, painter)
@@ -295,26 +337,32 @@ def run_setting(
     return Result(setting, verdict, trainer)
 
 
-def save(folder: Path, document: dict[str, Any], requests: list[dict]) -> None:
+def save(
+    folder: Path, document: dict[str, Any], requests: list[RelayedRequest]
+) -> None:
     """Keep the proxy's record and what Claude Code sent, for crosscheck.py.
 
     Args:
         folder: The run's folder.
         document: The rollout document, every row and message included.
-        requests: The JSON bodies Claude Code sent.
+        requests: What the relay kept: each request's path and body.
     """
-    (folder / ROLLOUT_FILE).write_text(json.dumps(document, indent=1) + "\n")
-    lines = "".join(json.dumps(request) + "\n" for request in requests)
+    text = json.dumps(document, indent=1) + "\n"
+    (folder / ROLLOUT_FILE).write_text(text, encoding="utf-8")
+    lines = "".join(
+        json.dumps({"path": request.path, "body": request.body}) + "\n"
+        for request in requests
+    )
     (folder / SENT_FILE).write_text(lines, encoding="utf-8")
 
 
 def print_table(results: list[Result]) -> None:
-    """Print the two runs side by side.
+    """Print the runs side by side.
 
     Args:
         results: One result per setting.
     """
-    print(f"\n{RULE} the same task, the note on and off")
+    print(f"\n{RULE} the same task, the note's three settings")
     print(
         f"{INDENT}{'setting':<8} {'grade':<8} calls roots rows row-tokens mask-1 "
         "trainable n_calls n_sampled"
@@ -339,20 +387,24 @@ def scripted_engine(client: CaptureClient) -> ScriptClient | None:
         client: The proxy's session client.
 
     Returns:
-        The engine's remote control, or None when it is the model.
+        The engine's remote control, or None when it is a real engine.
 
     Raises:
-        SystemExit: If the proxy is not running.
+        SystemExit: If the proxy is not running, or its engine does not answer.
     """
     try:
-        upstream = client.health()["upstream"]
+        upstream = client.health().get("upstream")
     except ProxyError as error:
         raise SystemExit(f"{error}: start the stack with ./start.sh") from error
+    if not upstream:
+        raise SystemExit(f"{client.proxy_url}/health names no engine: is it the proxy?")
     engine = ScriptClient(upstream)
     try:
         engine.state()
-    except ScriptError:
-        return None
+    except NotScriptedError:
+        return None  # a real engine: the model answers
+    except ScriptError as error:
+        raise SystemExit(f"the proxy's engine does not answer: {error}") from error
     return engine
 
 
@@ -363,28 +415,14 @@ def parse_args() -> argparse.Namespace:
         The arguments.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "setting", nargs="?", default="both", choices=("both", *SETTINGS)
-    )
+    parser.add_argument("setting", nargs="?", default=ALL, choices=(ALL, *SETTINGS))
     parser.add_argument("--proxy-url", default=PROXY_URL)
     parser.add_argument("--color", default="auto", choices=COLOR_CHOICES)
     return parser.parse_args()
 
 
-def describe_task(task: Task) -> str:
-    """Name the task in one line.
-
-    Args:
-        task: The task.
-
-    Returns:
-        Its id and question.
-    """
-    return f"{task.task_id}: {task.question}"
-
-
 def main() -> None:
-    """Run Claude Code with the note on and off, and print what the proxy built."""
+    """Run Claude Code with each setting of the note, and print what the proxy built."""
     args = parse_args()
     painter = Painter(args.color)
     client = CaptureClient(args.proxy_url)
@@ -398,13 +436,14 @@ def main() -> None:
         f"{SCRIPT} · Claude Code {CLAUDE_VERSION} through the capture proxy at "
         f"{client.proxy_url}, in front of {model}"
     )
-    print(f"{INDENT}task {describe_task(find_task(DEFAULT_TASK))}")
-    settings = list(SETTINGS) if args.setting == "both" else [args.setting]
+    task = find_task(DEFAULT_TASK)
+    print(f"{INDENT}task {task.task_id}: {task.question}")
+    settings = list(SETTINGS) if args.setting == ALL else [args.setting]
     results = []
     for setting in settings:
         try:
-            results.append(run_setting(setting, client, binary, engine, painter))
-        except (ProxyError, ScriptError) as error:
+            results.append(run_setting(setting, task, client, binary, engine, painter))
+        except (ProxyError, ScriptError, ClaudeNotInstalledError) as error:
             raise SystemExit(f"{setting}: {error}") from error
     if len(results) > 1:
         print_table(results)
