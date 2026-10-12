@@ -12,15 +12,18 @@ cuts them (``shlex``), then checked, then carried out in Python:
 - ``echo "<answer>" > answer.txt`` writes the answer file, and nothing else.
 
 Every path must stay inside the task folder. Pipes, ``;``, ``&&``, ``||``,
-any other redirection and command substitution are refused, so one call is
-one command. Variables are not expanded. Output longer than 4,000 characters
-is cut, as the project cuts Claude Code's (``bashOutputMaxChars``). This
-module needs only the standard library.
+any other redirection and command substitution are refused (a backtick
+anywhere, even inside quoted SQL), so one call is one command. Neither
+variables nor ``~`` are expanded. Nothing the model types makes the tool
+raise: a refusal is an ``Error: ...`` output. Output longer than 4,000
+characters is cut, as the project cuts Claude Code's (``bashOutputMaxChars``).
+This module needs only the standard library.
 """
 
 from __future__ import annotations
 
 import math
+import re
 import shlex
 import stat
 from collections.abc import Callable, Sequence
@@ -38,8 +41,11 @@ ALLOWED = (SQLITE, LS, ECHO)
 REDIRECT = ">"
 OPERATOR_CHARS = set("();<>|&")  # shlex returns runs of these as their own words
 SUBSTITUTIONS = ("`", "$(")  # command substitution: a command inside a command
+BRACKETS = "()"
+QUOTE_SQL_HINT = ' (put the SQL in quotes: sqlite3 data.db "SELECT ...")'
 OUTPUT_LIMIT = 4_000  # characters of one output the model sees
 NO_NEWLINE = "-n"  # echo's flag: leave out the final newline
+ECHO_FLAG = re.compile(r"-[neE]+")  # every flag word bash's echo understands
 NEWLINE = "\n"
 # sqlite3's output modes and the options that pick them.
 LIST_MODE, CSV_MODE, COLUMN_MODE = "list", "csv", "column"
@@ -122,6 +128,7 @@ def split_command(command: str) -> list[str]:
         raise Refused("command substitution (` or $( ) is not run")
     lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
     lexer.whitespace_split = True
+    lexer.commenters = ""  # shlex would drop everything after a #: keep it
     try:
         words = list(lexer)
     except ValueError as error:  # shlex: "No closing quotation"
@@ -157,9 +164,14 @@ def inside(workdir: Path, name: str) -> Path:
         The resolved path.
 
     Raises:
-        Refused: If it leads outside the task folder.
+        Refused: If it leads outside the task folder, or cannot be a path
+            at all (a NUL character, say).
     """
-    path = (workdir / Path(name).expanduser()).resolve()
+    # No ~ expansion: like variables, it is left as typed (a missing file).
+    try:
+        path = (workdir / name).resolve()
+    except (OSError, ValueError) as error:
+        raise Refused(f"{name!r}: not a usable path ({error})") from error
     if not path.is_relative_to(workdir.resolve()):
         raise Refused(f"{name}: only the task folder can be used")
     return path
@@ -406,6 +418,11 @@ def run_echo(words: list[str], workdir: Path) -> str:
     ending = NEWLINE
     if text[:1] == [NO_NEWLINE]:
         text, ending = text[1:], ""
+    # bash's echo also reads -e and -E (backslash escapes); this one does not,
+    # so it refuses them rather than write something bash would not. A word
+    # such as -5 is not a flag and is written as it is.
+    if text and text[0] != NO_NEWLINE and ECHO_FLAG.fullmatch(text[0]):
+        raise Refused(f"echo: only {NO_NEWLINE} is understood here, not {text[0]}")
     target.write_text(" ".join(text) + ending, encoding="utf-8")
     return ""
 
@@ -432,28 +449,39 @@ def cut(output: str, limit: int = OUTPUT_LIMIT) -> str:
     return f"{output[:limit]}\n[output cut to {limit:,} of {len(output):,} characters]"
 
 
-def run_command(command: str, workdir: Path) -> ToolResult:
+def run_command(
+    command: str, workdir: Path, limit: int | None = OUTPUT_LIMIT
+) -> ToolResult:
     """Check one command and, if it is allowed, carry it out.
 
     Args:
         command: The command the model sent.
         workdir: The task folder (it holds data.db; answer.txt goes here).
+        limit: The most characters of output kept, or None to keep it all
+            (for a harness that cuts long output its own way).
 
     Returns:
         The output the model will see, and whether the command succeeded.
+        Nothing the model types makes it raise: a refusal or a failure is
+        an ``Error: ...`` output.
     """
     try:
         words = split_command(command)
         # The only operator allowed is echo's "> answer.txt", checked there.
         operators = [word for word in words if is_operator(word)]
         if operators and not (words[0] == ECHO and operators == [REDIRECT]):
+            # An unquoted bracket in SQL also lands here: say what to do.
+            hint = QUOTE_SQL_HINT if set(operators[0]) <= set(BRACKETS) else ""
             raise Refused(
                 f"{operators[0]!r} is not run: one command per call, and the only "
-                f"redirection is echo ... > {ANSWER_FILE}"
+                f"redirection is echo ... > {ANSWER_FILE}{hint}"
             )
         if words[0] not in RUNNERS:
             allowed = ", ".join(ALLOWED)
             raise Refused(f"{words[0]}: not allowed here (this tool runs {allowed})")
-        return ToolResult(cut(RUNNERS[words[0]](words, workdir)), ok=True)
+        output = RUNNERS[words[0]](words, workdir)
+        return ToolResult(output if limit is None else cut(output, limit), ok=True)
     except (Refused, QueryError) as error:
         return ToolResult(f"Error: {error}", ok=False)
+    except OSError as error:  # a file the system would not read or write
+        return ToolResult(f"Error: {error.strerror or error}", ok=False)

@@ -46,7 +46,7 @@ from lfm_files import EVAL_TEMPERATURE, MAX_CALLS, rollout_path, work_folder
 from policy import Message, Policy, Reply
 from tasks import DATA_DIR, Task, find_task, prepare_workdir, task_instruction
 from tiny_harness import Rollout, load_policy, run_rollout, save_rollout
-from toolcalls import END_OF_TURN, ParsedReply, split_reply
+from toolcalls import END_OF_TURN, THINK_OPEN, ParsedReply, split_reply
 
 SCRIPT = "experiments.py"
 DEFAULT_TASK = "clinic-medium-001"  # the question of the recorded Claude Code run
@@ -56,7 +56,9 @@ NATIVE, TEXT = "native", "text"
 OFFERED_NAME = "Bash"  # Claude Code's name for its shell tool
 RECORDED_RUN = DATA_DIR / "clinic-medium-001.claude-code.jsonl"
 NO_SUCH_TOOL_MARK = "No such tool available"
-THINK_OPEN = "<think>"
+# What a call shows when the transcript ends before its result: said, never
+# left out, so a cut-off transcript cannot read as a complete one.
+NO_RESULT = "(no result recorded)"
 SYSTEM, USER, ASSISTANT = "system", "user", "assistant"
 
 # mini-swe-agent 2.4.6, as configs/harnesses/mini_swe_agent_textbased.yaml set
@@ -72,7 +74,10 @@ FORMAT_ERROR = "Expected exactly 1 action, found {count}."  # mini's own words
 
 # The YAML's templates, word for word. The instance template's last block,
 # <system_information> (your operating system's name and version), is left
-# out: it would print your machine's details and changes nothing here.
+# out: it would print your machine's details and changes nothing here. The
+# system template allows "commands connected with && or ||"; this chapter's
+# tool still runs one command per call and refuses them, as it does for
+# every harness here.
 SYSTEM_TEMPLATE = """\
 You are a helpful assistant that can interact with a computer.
 
@@ -306,7 +311,9 @@ def run_text_protocol(
         if len(actions) == 1:
             errors = 0
             submitted = actions[0] == SUBMIT_COMMAND
-            answer = "" if submitted else observation(run_command(actions[0], workdir))
+            # No cut by the tool: the observation template cuts long output.
+            result = run_command(actions[0], workdir, limit=None)
+            answer = "" if submitted else observation(result)
         else:
             errors += 1
             answer = render(
@@ -347,7 +354,7 @@ def read_recorded(path: Path = RECORDED_RUN) -> list[RecordedEvent]:
         OSError: If the file cannot be read.
     """
     events: list[RecordedEvent] = []
-    pending: dict[str, RecordedEvent] = {}  # calls waiting for their result
+    pending: dict[str, int] = {}  # a call's id -> its place in events
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.startswith("{"):
             continue
@@ -359,23 +366,40 @@ def read_recorded(path: Path = RECORDED_RUN) -> list[RecordedEvent]:
             if block.get("type") == "tool_use":
                 inputs = block.get("input") or {}
                 command = inputs.get("command") or json.dumps(inputs)
-                pending[block["id"]] = RecordedEvent("call", block["name"], command)
-            elif block.get("type") == "tool_result":
-                call = pending.pop(block["tool_use_id"])
-                result = str(block.get("content", ""))
+                pending[block.get("id", "")] = len(events)
                 events.append(
-                    RecordedEvent(
-                        "call",
-                        call.tool,
-                        call.command,
-                        result,
-                        bool(block.get("is_error")),
-                    )
+                    RecordedEvent("call", block["name"], command, NO_RESULT, True)
+                )
+            elif block.get("type") == "tool_result":
+                where = pending.pop(block.get("tool_use_id", ""), None)
+                if where is None:
+                    continue  # a result for no call: nothing to pair it with
+                call = events[where]
+                events[where] = RecordedEvent(
+                    "call",
+                    call.tool,
+                    call.command,
+                    result_text(block.get("content", "")),
+                    bool(block.get("is_error")),
                 )
             elif block.get("type") == "text":
                 kind = "harness" if record["type"] == USER else "text"
                 events.append(RecordedEvent(kind, result=block["text"]))
     return events
+
+
+def result_text(content: Any) -> str:
+    """Read a tool result's content, which Claude Code writes two ways.
+
+    Args:
+        content: A string, or a list of blocks such as ``{"type": "text"}``.
+
+    Returns:
+        The text.
+    """
+    if isinstance(content, list):
+        return "\n".join(str(block.get("text", "")) for block in content)
+    return str(content)
 
 
 def run_name_experiment(
@@ -427,22 +451,33 @@ def parse_args() -> argparse.Namespace:
     """Read the command line.
 
     Returns:
-        The arguments.
+        The arguments, checked.
+
+    Raises:
+        SystemExit: From argparse, if options that cannot go together are
+            given together.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--protocol",
         choices=(NATIVE, TEXT),
-        default=NATIVE,
-        help="native: the name experiment; text: mini-swe-agent's text protocol",
+        default=None,
+        help="native (the default): the name experiment; text: mini-swe-agent's",
     )
-    parser.add_argument("--task", default=DEFAULT_TASK, help="a held-out question")
+    parser.add_argument(
+        "--task", default=None, help=f"a held-out question ({DEFAULT_TASK})"
+    )
     parser.add_argument(
         "--recorded", action="store_true", help="print the recorded run only"
     )
     parser.add_argument("--full", action="store_true", help="print replies whole")
     parser.add_argument("--fast", action="store_true", help="Liquid's export")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.recorded and (args.protocol or args.task or args.fast):
+        parser.error("--recorded runs no model: it takes no other option")
+    args.protocol = args.protocol or NATIVE
+    args.task = args.task or DEFAULT_TASK
+    return args
 
 
 def main() -> None:

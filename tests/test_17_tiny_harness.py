@@ -420,7 +420,7 @@ def test_ls_lists_only_the_task_folder(workdir: Path) -> None:
     for command, words in {
         "ls ..": "only the task folder",
         "ls /": "only the task folder",
-        "ls ~": "only the task folder",
+        "ls ~": "~: No such file or directory",  # ~ is not expanded
         "ls -R": "option not supported here: -R",
         "ls nope": "nope: No such file or directory",
     }.items():
@@ -845,3 +845,124 @@ def test_the_recorded_run_needs_no_model(monkeypatch: pytest.MonkeyPatch) -> Non
     out = run_main(experiments, "--recorded")
     assert "Output token limit hit. (a reply hit the 1,024-token cap" in out
     assert "Step budget exhausted; stopping." in out
+
+
+# --------------------------------------------- what the code review turned up
+
+
+def test_nothing_the_model_types_crashes_the_tool(workdir: Path) -> None:
+    for command, words in {
+        "ls ~nosuchuser": "~nosuchuser: No such file or directory",  # no ~ expansion
+        "ls 'a\x00b'": "not a usable path",
+        "sqlite3 'data.db\x00' .tables": "not a usable path",
+        "sqlite3 data.db \"SELECT '\x00'\"": "Error: ",
+    }.items():
+        result = run(command, workdir)
+        assert not result.ok and words in result.output, command
+
+
+def test_a_hash_is_text_not_a_comment(workdir: Path) -> None:
+    assert run("echo C# > answer.txt", workdir).ok
+    assert (workdir / "answer.txt").read_text() == "C#\n"
+
+
+def test_echo_refuses_flags_it_cannot_honour(workdir: Path) -> None:
+    for command in ("echo -e 'a\\tb' > answer.txt", "echo -n -E x > answer.txt"):
+        result = run(command, workdir)
+        assert not result.ok and "only -n is understood here" in result.output
+    assert run("echo -5 > answer.txt", workdir).ok  # a negative answer, not a flag
+    assert (workdir / "answer.txt").read_text() == "-5\n"
+
+
+def test_the_guard_refuses_every_way_to_another_file(workdir: Path) -> None:
+    refused = {
+        "sqlite3 data.db \"VACUUM INTO 'copy.db'\"": "authorization denied",
+        f"sqlite3 data.db \"VACUUM INTO '{workdir / 'abs.db'}'\"": "denied",
+        'sqlite3 data.db "PRAGMA query_only = OFF; CREATE TABLE t (x)"': "authorized",
+        "sqlite3 data.db \"PRAGMA temp_store_directory = '/tmp'\"": "not authorized",
+        "sqlite3 data.db \"SELECT load_extension('x')\"": "not authorized",
+        'sqlite3 data.db "SELECT length(hex(zeroblob(2000000)))"': "too big",
+    }
+    for command, words in refused.items():
+        result = run(command, workdir)
+        assert not result.ok and words in result.output, command
+    assert run('sqlite3 data.db "PRAGMA query_only"', workdir).output == "1"
+    assert sorted(path.name for path in workdir.iterdir()) == ["data.db"]
+
+
+def test_an_unquoted_query_gets_a_hint(workdir: Path) -> None:
+    result = run("sqlite3 data.db SELECT count(*) FROM doctors", workdir)
+    assert (
+        "'(' is not run" in result.output and "put the SQL in quotes" in result.output
+    )
+
+
+def test_the_text_protocol_cuts_long_output_once(workdir: Path) -> None:
+    query = 'sqlite3 data.db "SELECT * FROM appointments"'
+    whole = run(query, workdir) and bash_tool.run_command(query, workdir, limit=None)
+    policy = Scripted([text_reply(query)] + [call("x")] * 3)
+    run_ = experiments.run_text_protocol(policy, EASY, workdir)
+    observation = run_.turns[0].answer
+    elided = len(whole.output) - 4_000
+    assert f"{elided} characters elided" in observation
+    assert "[output cut to" not in observation  # the tool did not cut it first
+
+
+def test_a_transcript_cut_short_says_so(tmp_path: Path) -> None:
+    lines = [
+        "[mhrl] harness=claude-code",
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "tool_use", "id": "a", "name": "Bash", "input": {}},
+                        {"type": "tool_use", "id": "b", "name": "Bash", "input": {}},
+                    ]
+                },
+            }
+        ),
+        json.dumps(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "a",
+                            "content": [{"type": "text", "text": "one"}],
+                        },
+                        {"type": "tool_result", "tool_use_id": "zz", "content": "?"},
+                    ]
+                },
+            }
+        ),
+    ]
+    path = tmp_path / "cut.jsonl"
+    path.write_text("\n".join(lines) + "\n")
+    events = experiments.read_recorded(path)
+    assert [(e.command, e.result, e.is_error) for e in events] == [
+        ("{}", "one", False),
+        ("{}", experiments.NO_RESULT, True),
+    ]
+
+
+def test_options_that_contradict_each_other_are_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    use_policy(monkeypatch, tiny_harness, Scripted([]))
+    with pytest.raises(SystemExit):
+        run_main(tiny_harness, "--task", "clinic-easy-001", "--held-out", "2")
+    with pytest.raises(SystemExit):
+        run_main(experiments, "--recorded", "--protocol", "text")
+
+
+def test_the_last_unreadable_reply_is_not_called_an_answer(workdir: Path) -> None:
+    broken = f"Try.</think>{START}[bash(command='ls'{END}{EOT}"
+    policy = Scripted([broken] * 3)
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        tiny_harness.run_rollout(policy, EASY, workdir, show=report.turn_printer(False))
+    text = printed.getvalue()
+    assert "the last one allowed" in text
+    assert "this is the final answer" not in text

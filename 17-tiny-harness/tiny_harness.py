@@ -48,7 +48,7 @@ from lfm_files import (
 )
 from policy import FINISH_LENGTH, Message, Policy, Reply, Tool
 from tasks import Task, find_task, load_tasks, prepare_workdir, task_instruction
-from toolcalls import END_OF_TURN, ParsedReply, ToolCall, split_reply
+from toolcalls import END_OF_TURN, THINK_OPEN, ParsedReply, ToolCall, split_reply
 
 SCRIPT = "tiny_harness.py"
 TITLE = "one model, one tool, one loop"
@@ -56,7 +56,6 @@ DEFAULT_TASK = "clinic-easy-001"
 LABEL = "harness"  # this script's work and rollout folders
 TOOL_NAME = "bash"
 COMMAND = "command"  # the tool's one argument
-THINK_OPEN = "<think>"  # the template's generation prompt ends with it
 SYSTEM, USER, ASSISTANT, TOOL_ROLE = "system", "user", "assistant", "tool"
 SYSTEM_PROMPT = (
     "You are a data analyst. You work in a folder that holds a SQLite database, "
@@ -110,13 +109,16 @@ class Turn:
         reply: The reply, as the model wrote it.
         parsed: Its reasoning, visible text and tool calls.
         actions: Each tool call run, with its observation.
-        note: What the harness told the model about an unreadable reply.
+        why: Why the reply could not be read, or None when it could.
+        note: What the harness told the model about it (None for the last
+            unreadable reply, after which the loop stops).
     """
 
     number: int
     reply: Reply
     parsed: ParsedReply
     actions: list[Action]
+    why: str | None = None
     note: str | None = None
 
 
@@ -278,7 +280,7 @@ def run_rollout(
         if why and in_a_row < MAX_UNREADABLE:
             note = UNREADABLE_NOTE.format(why=why, tool=tool_name)
             messages.append({"role": USER, "content": note})
-        turn = Turn(number, reply, parsed, actions, note)
+        turn = Turn(number, reply, parsed, actions, why, note)
         turns.append(turn)
         if show is not None:
             show(turn)
@@ -359,18 +361,26 @@ def parse_args() -> argparse.Namespace:
         SystemExit: From argparse, with the reason, if a flag is impossible.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--task", default=DEFAULT_TASK, help="a held-out question")
+    parser.add_argument(
+        "--task", default=None, help=f"a held-out question ({DEFAULT_TASK})"
+    )
     parser.add_argument(
         "--held-out", type=int, default=None, help="the first N held-out questions"
     )
     parser.add_argument("--full", action="store_true", help="print replies whole")
     parser.add_argument("--fast", action="store_true", help="Liquid's export")
     parser.add_argument(
-        "--temperature", type=float, default=EVAL_TEMPERATURE, help="0: greedy"
+        "--temperature",
+        type=float,
+        default=EVAL_TEMPERATURE,
+        help="0: greedy; above 0, drawn with one seed for the whole run",
     )
     args = parser.parse_args()
+    if args.held_out is not None and args.task is not None:
+        parser.error("--task and --held-out pick the questions two ways: use one")
     if args.held_out is not None and args.held_out < 1:
         parser.error("--held-out must be at least 1")
+    args.task = args.task or DEFAULT_TASK
     if args.temperature < 0:
         parser.error("--temperature must be 0 or more")
     return args

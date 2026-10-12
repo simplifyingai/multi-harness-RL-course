@@ -11,7 +11,10 @@ Chapter 17 runs every ``sqlite3`` command the model sends through this guard,
 so it keeps what the sqlite3 program prints and the guard did not need: each
 result's column names (for ``-header``), several statements in one command,
 and the table names and ``CREATE`` statements behind ``.tables`` and
-``.schema``. This module needs only the standard library.
+``.schema``. Because the model now types the SQL, the guard also refuses to
+let a query switch ``query_only`` back off (with two other settings), and
+caps one value at a million bytes. This module needs only the standard
+library.
 """
 
 from __future__ import annotations
@@ -30,6 +33,10 @@ CONTINUE_QUERY = 0  # and to let it go on
 MAX_ROWS = 1_000  # rows read from one result; the harness cuts long output anyway
 QUERY_ONLY = "PRAGMA query_only = ON"  # no statement may write, to any database
 REFUSED_ACTIONS = (sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH)
+# Settings a query could otherwise change on its own connection: turning
+# query_only off, moving temporary files, editing the schema table.
+GUARDED_PRAGMAS = {"query_only", "temp_store_directory", "writable_schema"}
+MAX_VALUE_BYTES = 1_000_000  # the largest text or blob one query may build
 STATEMENT_END = ";"
 # What sqlite3's .tables and .schema read: the tables, by name and in the
 # order they were made (sqlite_ tables are SQLite's own and never shown).
@@ -64,17 +71,29 @@ class Result:
     rows: list[tuple[Any, ...]]
 
 
-def refuse_attach(action: int, *_: object) -> int:
-    """Tell SQLite to refuse ATTACH and DETACH, and allow everything else.
+def refuse_attach(action: int, name: str | None, value: str | None, *_: object) -> int:
+    """Tell SQLite to refuse ATTACH, DETACH and changes to the guard's settings.
+
+    ``VACUUM INTO`` writes a copy of the database through ATTACH, so refusing
+    ATTACH refuses it too.
 
     Args:
         action: The kind of operation SQLite is about to prepare.
-        *_: The operation's details (names), not needed here.
+        name: Its first detail: for a PRAGMA, the setting's name.
+        value: Its second detail: for a PRAGMA, the new value (None when the
+            setting is only read).
+        *_: The other details, not needed here.
 
     Returns:
-        ``sqlite3.SQLITE_DENY`` for ATTACH and DETACH, else ``SQLITE_OK``.
+        ``sqlite3.SQLITE_DENY`` for ATTACH, DETACH and a change to one of
+        GUARDED_PRAGMAS, else ``SQLITE_OK``.
     """
-    return sqlite3.SQLITE_DENY if action in REFUSED_ACTIONS else sqlite3.SQLITE_OK
+    if action in REFUSED_ACTIONS:
+        return sqlite3.SQLITE_DENY
+    changes_guard = name is not None and name.lower() in GUARDED_PRAGMAS
+    if action == sqlite3.SQLITE_PRAGMA and changes_guard and value is not None:
+        return sqlite3.SQLITE_DENY
+    return sqlite3.SQLITE_OK
 
 
 def connect_read_only(path: Path) -> sqlite3.Connection:
@@ -93,6 +112,9 @@ def connect_read_only(path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
     connection.execute(QUERY_ONLY)
     connection.set_authorizer(refuse_attach)  # mode=ro guards only this file
+    # The default allows a 1 GB value: one query could fill the memory the
+    # model needs. A million bytes is far more than any answer.
+    connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, MAX_VALUE_BYTES)
     return connection
 
 

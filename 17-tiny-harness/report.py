@@ -14,15 +14,15 @@ from typing import TYPE_CHECKING
 
 from lfm_files import MAX_CALLS, MAX_UNREADABLE, OUTPUT_CAP, gigabytes, short_path
 from tasks import ANSWER_FILE, DATABASE_FILE, Task
-from toolcalls import THINK_CLOSE
+from toolcalls import THINK_CLOSE, THINK_OPEN
 
 if TYPE_CHECKING:  # for type hints only: these modules print through this one
     from experiments import RecordedEvent, TextRun, TextTurn
+    from policy import Reply
     from tiny_harness import Rollout, Turn
 
 INDENT = "  "
 LABEL_WIDTH = 13  # "observation" and its gap, so values line up
-THINK_OPEN = "<think>"
 REASONING_HEAD = 160  # characters of a long reasoning shown before the cut
 REASONING_TAIL = 80  # and after it
 OUTPUT_LINES = 8  # lines of an observation shown per call
@@ -39,6 +39,10 @@ LEVEL_WIDTH = 8
 ANSWER_WIDTH = 22
 GRADE_WIDTH = 8
 NUMBER_WIDTH = 7
+# The recorded Claude Code run (data/clinic-medium-001.claude-code.jsonl).
+RECORDED_HARNESS = "Claude Code 2.1.290"
+RECORDED_ON = "2026-10-06"
+RECORDED_TASK = "clinic-medium-001"
 # Plain words for Claude Code's own messages (chapter 1's replay_agent.py).
 GLOSSES = {
     "Output token limit hit.": (
@@ -127,7 +131,7 @@ def show_reply(text: str, full: bool) -> str:
     return THINK_OPEN + reasoning + closed + rest
 
 
-def call_header(number: int, reply: object) -> str:
+def call_header(number: int, reply: Reply) -> str:
     """Write the first line of a call: its number, its tokens, how it ended.
 
     Args:
@@ -254,6 +258,8 @@ def turn_printer(full: bool) -> Callable[[Turn], None]:
             labelled("observation", first_lines(action.result.output, lines))
         if turn.note is not None:
             labelled("harness", f"unreadable; it tells the model: {turn.note}")
+        elif turn.why is not None:
+            labelled("harness", f"unreadable ({turn.why}), the last one allowed")
         elif not turn.actions:
             labelled("harness", "no tool call: this is the final answer, so it stops")
 
@@ -278,9 +284,8 @@ def print_turn_line(turn: Turn) -> None:
     """
     head = f"{INDENT}call {turn.number} · wrote {turn.reply.reply_tokens:,} tokens · "
     pad = " " * len(head)
-    if turn.note is not None:
-        reason = turn.note.split("(", 1)[-1].split(")", 1)[0]
-        print(f"{head}unreadable: {reason}")
+    if turn.why is not None:
+        print(f"{head}unreadable: {turn.why}")
         return
     if not turn.actions:
         answer = turn.parsed.content[:TEXT_SHOWN] or NONE
@@ -403,13 +408,12 @@ def print_recorded(events: Sequence[RecordedEvent], path: Path, mark: str) -> No
         mark: The words that identify a tool that does not exist.
     """
     heading(
-        "the recorded Claude Code run: the same model, as released, on "
-        "clinic-medium-001"
+        f"the recorded Claude Code run: the same model, as released, on {RECORDED_TASK}"
     )
     print(
-        f"{INDENT}Claude Code 2.1.290 offered one tool, 'Bash'; recorded by the "
-        f"project on 2026-10-06 with greedy decoding and an 8-call budget "
-        f"(data/{path.name})"
+        f"{INDENT}{RECORDED_HARNESS} offered one tool, 'Bash'; recorded by the "
+        f"project on {RECORDED_ON} with greedy decoding and a {MAX_CALLS}-call "
+        f"budget (data/{path.name})"
     )
     calls = [event for event in events if event.kind == "call"]
     for event in events:
@@ -426,7 +430,7 @@ def print_recorded(events: Sequence[RecordedEvent], path: Path, mark: str) -> No
     print(
         f"{INDENT}tool calls: {len(calls)}, of which {wasted.total()} answered "
         f"'{mark}' ({names}); the last reply is not the model's: the project's "
-        "proxy writes it when the 8-call budget is used up"
+        f"proxy writes it when the {MAX_CALLS}-call budget is used up"
     )
 
 

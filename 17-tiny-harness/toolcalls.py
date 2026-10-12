@@ -32,6 +32,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+THINK_OPEN = "<think>"  # the chat template's generation prompt ends with it
 THINK_CLOSE = "</think>"
 TOOL_CALL_START = "<|tool_call_start|>"
 TOOL_CALL_END = "<|tool_call_end|>"
@@ -174,7 +175,7 @@ def split_reply(text: str, tools: list[dict[str, Any]] | None) -> ParsedReply:
     Returns:
         The reasoning, the visible text, the calls and the blocks opened.
     """
-    text = text.replace(END_OF_TURN, "")
+    text = text.removesuffix(END_OF_TURN)  # a reply ends at its end of turn
     reasoning, closed, answer = text.partition(THINK_CLOSE)
     if not closed:
         # The model never closed its thinking: everything is reasoning.
