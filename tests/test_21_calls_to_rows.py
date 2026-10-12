@@ -888,6 +888,7 @@ def test_the_dry_run_is_remeasured_from_a_rollouts_file(
     path.write_text(json.dumps(forked) + "\n" + json.dumps(single) + "\n")
     graph_lab.print_dry_run(graph_lab.read_dry_run(path))
     out = capsys.readouterr().out
+    assert f"re-measured on {graph_lab.short_path(path.resolve())}:" in out
     assert "11.8% of the dry run's trainable tokens" in out
     assert "2 rollouts, 1 with rows that share trained tokens" in out
     assert (

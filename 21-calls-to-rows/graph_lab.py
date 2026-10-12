@@ -625,7 +625,7 @@ def remeasure_dry_run(dry_run: DryRun) -> None:
     repeats = before - after
     share = repeats / before if before else 0.0
     print(
-        f"{INDENT}re-measured on {dry_run.path}:\n"
+        f"{INDENT}re-measured on {short_path(dry_run.path.resolve())}:\n"
         f"{INDENT}{len(dry_run.records)} rollouts, {forked} with rows that share "
         f"trained tokens · {before:,} mask-1 tokens, {repeats:,} of them repeats "
         f"({share:.1%}), {repeats_unrewarded:,} in rollouts with reward 0"
