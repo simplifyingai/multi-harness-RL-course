@@ -440,7 +440,8 @@ def main() -> None:
     every = load_tasks()
     tasks = balanced(every, limit)
     if args.plan:
-        print_protocol(tasks, args.harnesses, records_path(MODEL_LABEL), print)
+        label = args.label or MODEL_LABEL
+        print_protocol(tasks, args.harnesses, records_path(label), print)
         show_plan(every, limit, print)
         return
     client = CaptureClient(args.proxy_url)

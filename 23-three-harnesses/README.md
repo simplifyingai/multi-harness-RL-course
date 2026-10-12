@@ -523,6 +523,19 @@ tools and solved the task. Pi read the binary file again, as recorded; with
 the model the refused prompt was 30,988 tokens, 93 more than the scripted
 run's, because the model's own reply sits in the prompt.
 
+**A later finding (chapter 24).** `run_one.py` keeps a run's state folder
+(the harness's HOME, TMPDIR and config) beside its task folder. Claude Code
+keeps its auto-memory folder inside its config folder and names it in its
+prompt (`memory_paths.auto` in its log's init event), so here that writable
+folder sat inside the task's own tree,
+`.../runs/claude-code/state/claude/projects/...-task/memory/`. Over chapter
+24's 24 held-out tasks this layout misled the untrained model in 9 cells: it
+wrote the right answer into that memory folder instead of the task folder,
+and scored 0 there. This chapter's Claude Code run with the model wrote to
+the task folder, so its outcome stands. Chapter 24 gives each cell's state a
+fresh folder in the system's temp folder, as the project does
+(`mhrl/harnesses/base.py`).
+
 With `--bare`, the same model in the same Claude Code solved it in 6 calls,
 starting from 539 tokens:
 

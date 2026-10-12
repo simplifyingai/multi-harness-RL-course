@@ -18,9 +18,11 @@ import contextlib
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from collections import Counter
@@ -579,18 +581,60 @@ class FakeClient:
         return True
 
 
-def test_a_cell_that_fails_still_closes_its_session(
-    course_home: Path, monkeypatch: pytest.MonkeyPatch
+def test_a_cell_that_fails_still_closes_its_session_and_removes_its_state(
+    course_home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     def broken(*args: Any) -> None:
         raise OSError("the harness would not start")
 
+    state = tmp_path / "state"
+    monkeypatch.setattr(evaluate.tempfile, "mkdtemp", lambda prefix: str(state))
+    state.mkdir()
     monkeypatch.setattr(evaluate, "wire", broken)
     client = FakeClient()
     setup = evaluate.CellSetup(client, "http://proxy", "http://engine", "none", "t", {})
     with pytest.raises(OSError, match="would not start"):
         evaluate.run_rollout(EVERY[0], "pi", setup)
     assert client.closed == [FakeSession.session_id]
+    assert not state.exists()
+
+
+def test_a_cells_state_lives_in_the_temp_folder_as_in_the_project(
+    course_home: Path,
+) -> None:
+    folders = evaluate.prepare_cell("base", "claude-code", EVERY[0])
+    try:
+        assert folders.state.name.startswith("mhrl-harness-claude-code-")
+        assert folders.state.parent == Path(tempfile.gettempdir()).resolve()
+        assert (folders.task / tasks.DATABASE_FILE).is_file()
+        assert not (folders.task.parent / run_one.STATE_FOLDER).exists()
+    finally:
+        shutil.rmtree(folders.state)
+
+
+def test_an_answer_left_in_the_state_folder_is_named(tmp_path: Path) -> None:
+    assert evaluate.stray_answer(tmp_path) is None
+    memory = tmp_path / "claude" / "projects" / "-Users-x-task" / "memory"
+    memory.mkdir(parents=True)
+    (memory / "answer.txt").write_text("General Practice\n")
+    assert evaluate.stray_answer(tmp_path) == (
+        "'General Practice' in claude/projects/<folder>/memory/answer.txt"
+    )
+    line = evaluate.cell_line(
+        1, 1, record("a", "claude-code", False, answer_elsewhere="'7' in x")
+    )
+    assert line.endswith("an answer.txt outside the task folder")
+
+
+def test_a_log_in_the_state_folder_is_kept_before_it_goes(tmp_path: Path) -> None:
+    folders = run_one.RunFolders(task=tmp_path / "cell" / "task", state=tmp_path / "s")
+    folders.make()
+    log = folders.state / "trajectory.json"
+    log.write_text("{}")
+    kept = evaluate.keep_log(log, folders)
+    assert kept == tmp_path / "cell" / "trajectory.json" and kept.read_text() == "{}"
+    outside = tmp_path / "cell" / "stream.jsonl"
+    assert evaluate.keep_log(outside, folders) == outside
 
 
 def test_an_answer_naming_the_home_folder_is_written_with_a_tilde(
@@ -920,6 +964,7 @@ def test_every_cell_runs_once_through_the_proxy_and_is_recorded(
     ]
     for item in records:
         assert item.correct and item.n_calls == 4 and item.loopback_only
+        assert item.answer_elsewhere is None
         assert item.engine == "scripted-solve" and item.purpose == "eval"
         assert item.version == install.PINS[item.harness].version
         assert item.first_prompt and item.domain == "airline"
@@ -936,6 +981,9 @@ def test_every_cell_runs_once_through_the_proxy_and_is_recorded(
     kept = json.loads((cell / run_one.RUN_FILE).read_text())
     assert kept["record"]["task_id"] == "airline-easy-001"
     assert (cell / run_one.ROLLOUT_FILE).is_file()
+    assert not (cell / run_one.STATE_FOLDER).exists()  # it was in the temp folder
+    mini = evaluate.cell_folder("scripted-solve", "mini-swe-agent", EVERY[3])
+    assert (mini / "trajectory.json").is_file()  # kept before the state went
     # A second run refuses the file; --resume finishes it without repeating a cell.
     with pytest.raises(SystemExit, match="--resume"):
         evaluate_cells(proxy_url, monkeypatch, capsys, "--limit", "2")

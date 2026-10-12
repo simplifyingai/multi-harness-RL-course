@@ -7,9 +7,12 @@ where this laptop differs, marked where it happens:
 * **balanced**: up to ``limit`` tasks, round-robin over (database,
   difficulty), so 24 tasks are 4 from each of the six buckets;
 * **run_rollout**: one (task, harness) **cell**, built from chapter 23's
-  ``run_one.py``: a fresh folder, an evaluation session (temperature 0, an
-  8-call budget; the engine caps each reply at 1,024 tokens), the harness in
-  the sandbox through the proxy, the grade, and the proxy's count of calls;
+  ``run_one.py``: a fresh task folder, the harness's private state in a
+  fresh folder in the system's temp folder (where the project puts it), an
+  evaluation session (temperature 0, an 8-call budget; the engine caps each
+  reply at 1,024 tokens), the harness in the sandbox through the proxy, the
+  grade, the proxy's count of calls, and any answer file left outside the
+  task folder;
 * **evaluate**: every cell once, harness by harness, each record appended to
   a JSON-lines file the moment its rollout ends (the project appends all of
   them at the end, so a crash lost the lot), then ``summarize``;
@@ -26,8 +29,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import statistics
 import sys
+import tempfile
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
@@ -45,14 +50,21 @@ from run_one import (
     run_boxed,
     save_run,
 )
-from tasks import Task, task_instruction
-from wire import Options, wire
+from tasks import ANSWER_FILE, Task, task_instruction
+from wire import Options, RunFolders, wire
 
 PERCENT = 100.0
 LABEL_WIDTH = 12  # the project's label column
 HARNESS_COLUMN = 14  # "mini-swe-agent", the longest harness name
 TASK_COLUMN = 18  # "airline-medium-001", the longest task id
 CALLS_COLUMN = 8  # "8 calls"
+STATE_PREFIX = "mhrl-harness-"  # the project's mkdtemp prefix (mhrl/harnesses/base.py)
+STRAY_SHOWN = 60  # characters of a misplaced answer kept in the record
+# Claude Code's auto-memory folder is <state>/claude/projects/<the cwd spelt
+# as one name>/memory/. That name holds your user name, so it is shown as
+# <folder>.
+CLAUDE_PROJECTS = ("claude", "projects")
+PROJECT_FOLDER = "<folder>"
 EVAL_FOLDER = "eval"  # COURSE_HOME/24-measuring/runs/eval/<label>/<harness>/<task>
 # What ended a run, in two or three words, from run_one's longer sentence.
 STOP_LABELS = (
@@ -93,6 +105,8 @@ class Record:
         stop: What ended the run, in a few words.
         first_prompt: Prompt tokens of the first agent call, or None.
         loopback_only: Whether lsof saw only this machine's addresses.
+        answer_elsewhere: An answer file the harness wrote in its state
+            folder instead of the task folder, and what it said.
     """
 
     task_id: str
@@ -113,6 +127,7 @@ class Record:
     stop: str = ""
     first_prompt: int | None = None
     loopback_only: bool | None = None
+    answer_elsewhere: str | None = None
 
     @property
     def cell(self) -> tuple[str, str]:
@@ -367,9 +382,11 @@ def run_rollout(task: Task, harness: str, setup: CellSetup) -> Record:
     """Run one task in one harness through the capture proxy, once.
 
     The project's ``run_rollout`` for an evaluation, made of chapter 23's
-    ``run_one.py`` steps without its printing: a fresh folder, a session,
-    the wiring, the boxed run, the grade, the proxy's record. The folder
-    keeps the harness's own log, the proxy's record and ``run.json``.
+    ``run_one.py`` steps without its printing: fresh folders, a session, the
+    wiring, the boxed run, the grade, the proxy's record. The cell's folder
+    keeps the task folder, the harness's own log, the proxy's record and
+    ``run.json``; the state folder is removed afterwards, as the project
+    removes it.
 
     Args:
         task: The task.
@@ -385,7 +402,101 @@ def run_rollout(task: Task, harness: str, setup: CellSetup) -> Record:
             start.
         HarnessInstallError: If the sandbox cannot be applied (nothing runs).
     """
-    folders = prepare_run(cell_folder(setup.label, harness, task), task)
+    folders = prepare_cell(setup.label, harness, task)
+    try:
+        return run_in(folders, task, harness, setup)
+    finally:
+        shutil.rmtree(folders.state, ignore_errors=True)  # as the project does
+
+
+def prepare_cell(label: str, harness: str, task: Task) -> RunFolders:
+    """Make a cell's folders: the task folder here, the state folder in the temp folder.
+
+    The task folder (``data.db``, ``answer.txt``) and the evidence live in the
+    cell's folder. The harness's private state (its HOME, TMPDIR and config)
+    goes in a fresh folder in the system's temp folder, where the project
+    puts it (``tempfile.mkdtemp(prefix="mhrl-harness-<name>-")`` in
+    ``mhrl/harnesses/base.py``). Chapter 23 kept state beside the task folder.
+    Measured here, that changed what Claude Code tells the model: its
+    auto-memory folder lives in its config folder, so its prompt then named a
+    writable ``.../<task>/state/claude/projects/...-task/memory/`` beside the
+    task, and in 9 of 24 cells the model wrote its answer there.
+
+    Args:
+        label: The checkpoint, such as ``base``.
+        harness: The harness.
+        task: The task.
+
+    Returns:
+        The cell's folders, both empty but for ``data.db``.
+    """
+    beside = prepare_run(cell_folder(label, harness, task), task)
+    shutil.rmtree(beside.state)  # run_one makes one beside the task folder
+    state = Path(tempfile.mkdtemp(prefix=f"{STATE_PREFIX}{harness}-")).resolve()
+    folders = RunFolders(task=beside.task, state=state)
+    folders.make()
+    return folders
+
+
+def stray_answer(state: Path) -> str | None:
+    """Find an answer file the harness wrote in its state folder, not the task's.
+
+    The grader reads only the task folder's ``answer.txt``, so an answer
+    written anywhere else scores 0 whatever it says. Saying where it went
+    tells a model failure from a misplaced file.
+
+    Args:
+        state: The cell's state folder.
+
+    Returns:
+        Such as ``'7' in claude/projects/<folder>/memory/answer.txt``, or
+        None when there is no such file.
+    """
+    for path in sorted(state.rglob(ANSWER_FILE)):
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace").strip()
+        parts = list(path.relative_to(state).parts)
+        if parts[: len(CLAUDE_PROJECTS)] == list(CLAUDE_PROJECTS) and len(parts) > 2:
+            parts[len(CLAUDE_PROJECTS)] = PROJECT_FOLDER  # it spells the cwd
+        return f"{text[:STRAY_SHOWN]!r} in {'/'.join(parts)}"
+    return None
+
+
+def keep_log(log: Path, folders: RunFolders) -> Path:
+    """Copy the harness's own log out of the state folder, before it is removed.
+
+    Args:
+        log: The log (mini-swe-agent's trajectory lives in the state folder).
+        folders: The cell's folders.
+
+    Returns:
+        Where the log is kept: in the cell's folder.
+    """
+    if not log.is_relative_to(folders.state) or not log.is_file():
+        return log
+    kept = folders.task.parent / log.name
+    shutil.copyfile(log, kept)
+    return kept
+
+
+def run_in(folders: RunFolders, task: Task, harness: str, setup: CellSetup) -> Record:
+    """Run the cell in its folders: session, wiring, boxed run, grade, record.
+
+    Args:
+        folders: The cell's folders.
+        task: The task.
+        harness: The harness.
+        setup: What every cell shares.
+
+    Returns:
+        The cell's record.
+
+    Raises:
+        ProxyError: If the proxy refuses the session or cannot be reached.
+        OSError: If the harness cannot start.
+        HarnessInstallError: If the sandbox cannot be applied (nothing runs).
+    """
     labels = {"task_id": task.task_id, "harness": harness}
     session = setup.client.open_session(PURPOSE_EVAL, labels, MAX_CALLS)
     try:
@@ -404,7 +515,8 @@ def run_rollout(task: Task, harness: str, setup: CellSetup) -> Record:
         document = setup.client.rollout(session.session_id)
     finally:
         setup.client.close(session.session_id)  # on every way out
-    facts = read_facts(harness, document, own_log(wiring, folders), process)
+    log = keep_log(own_log(wiring, folders), folders)
+    facts = read_facts(harness, document, log, process)
     turns = [t for t in document.get("turns") or [] if not t.get("discarded")]
     record = Record(
         task_id=task.task_id,
@@ -424,6 +536,7 @@ def run_rollout(task: Task, harness: str, setup: CellSetup) -> Record:
         stop=stop_label(facts.stop),
         first_prompt=facts.first_prompt,
         loopback_only=process.network.loopback_only,
+        answer_elsewhere=stray_answer(folders.state),
     )
     run = {"record": asdict(record), "facts": asdict(facts)}
     run["network"] = process.network.as_dict()
@@ -450,10 +563,13 @@ def cell_line(index: int, total: int, record: Record) -> str:
     verdict = "correct" if record.correct else "wrong  "
     answer = "none" if record.submitted is None else tilde(repr(record.submitted))
     calls = f"{record.n_calls} call" + ("" if record.n_calls == 1 else "s")
+    elsewhere = " · an answer.txt outside the task folder" * bool(
+        record.answer_elsewhere
+    )
     return (
         f"[{index:>{width}}/{total}] {record.harness:<{HARNESS_COLUMN}} "
         f"{record.task_id:<{TASK_COLUMN}} {verdict} · {calls:<{CALLS_COLUMN}} · "
-        f"{record.seconds:5.1f} s · {record.stop} · answer {answer}"
+        f"{record.seconds:5.1f} s · {record.stop} · answer {answer}{elsewhere}"
     )
 
 

@@ -651,7 +651,12 @@ note, one root with it off. The first call read 2,305 tokens. Graded, the
 model solved the default run only. In the `off` run it found 30 and wrote
 it into Claude Code's memory folder (its system prompt says "You have a
 persistent file-based memory at" that folder), not into the task folder, so
-the grader found no `answer.txt`. In the `fixed` run it called a tool named
+the grader found no `answer.txt`. That folder was inside the run's own folder:
+the run log's init event names it (`memory_paths.auto`) as
+`.../runs/reminder-off/state/config/projects/...-task/memory/`, because the
+run keeps Claude Code's config in a state folder beside its task folder.
+Chapter 24 found that this layout misled the model in 9 of 24 cells, and
+moved each run's state to the system's temp folder, as the project does. In the `fixed` run it called a tool named
 `bash` five times (Claude Code's is `Bash`, and it answers that the name is
 wrong), then `python`, then wrote two replies of 1,024 tokens with no call in
 them, and the proxy's budget of 8 calls ran out. Each run samples at temperature 1, so one run per setting says nothing
