@@ -336,7 +336,7 @@ def report_run(name: str, count: TokenCounter, show_system: bool) -> None:
 
 
 def print_system(body: dict[str, Any]) -> None:
-    """Print a request's system prompt, its system message and the Bash tool.
+    """Print a request's system prompt, every message and the Bash tool.
 
     Args:
         body: The request body.
@@ -346,10 +346,11 @@ def print_system(body: dict[str, Any]) -> None:
         text = block.get("text", "")
         print(f"\n===== system block {index + 1} ({len(text):,} characters)")
         print(short(text))
-    for message in body.get("messages", []):
-        if message["role"] == "system":
-            text = "\n".join(block_text(b) for b in blocks(message["content"]))
-            print(f"\n===== message with role system ({len(text):,} characters)")
+    for number, message in enumerate(body.get("messages", []), start=1):
+        for part, block in enumerate(blocks(message["content"]), start=1):
+            text = block_text(block)
+            where = f"message {number} (role {message['role']}), block {part}"
+            print(f"\n===== {where}: {len(text):,} characters")
             print(short(text))
     for tool in body.get("tools") or []:
         if tool["name"] == MAIN_TOOL:

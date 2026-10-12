@@ -390,6 +390,7 @@ def test_report_run_prints_each_call_and_the_shared_prompt(
     assert "side calls          0 of 2" in out
     assert "input: command (string, required)" in out
     assert "===== the Bash tool, as sent" in out
+    assert "===== message 2 (role system), block 1: 13 characters" in out
 
 
 def test_compare_runs_puts_two_first_calls_side_by_side(
