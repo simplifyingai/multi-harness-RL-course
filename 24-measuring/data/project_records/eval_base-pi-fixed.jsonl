@@ -1,0 +1,24 @@
+{"task_id": "airline-easy-001", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 1, "seconds": 22.2, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "airline-hard-001", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 1, "seconds": 22.0, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "airline-medium-001", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 1, "seconds": 22.2, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "clinic-easy-001", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 1, "seconds": 22.2, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "clinic-hard-001", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 1, "seconds": 23.1, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "clinic-medium-001", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 1, "seconds": 23.1, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "airline-easy-002", "harness": "pi", "correct": true, "submitted": "6", "reason": "correct", "n_calls": 6, "seconds": 66.9, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "airline-hard-002", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 1, "seconds": 24.5, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "airline-medium-002", "harness": "pi", "correct": true, "submitted": "4", "reason": "correct", "n_calls": 5, "seconds": 45.0, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "clinic-easy-002", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 5, "seconds": 46.0, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "clinic-hard-002", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 1, "seconds": 18.9, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "clinic-medium-002", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 1, "seconds": 11.6, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "airline-easy-003", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 1, "seconds": 12.0, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "airline-hard-003", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 1, "seconds": 16.0, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "airline-medium-003", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 1, "seconds": 16.0, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "clinic-easy-003", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 1, "seconds": 18.6, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "clinic-hard-003", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 8, "seconds": 83.5, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "clinic-medium-003", "harness": "pi", "correct": true, "submitted": "523.0", "reason": "correct", "n_calls": 6, "seconds": 61.0, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "airline-easy-004", "harness": "pi", "correct": true, "submitted": "5", "reason": "correct", "n_calls": 6, "seconds": 61.5, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "airline-hard-004", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 1, "seconds": 14.2, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "airline-medium-004", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 1, "seconds": 15.0, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "clinic-easy-004", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 1, "seconds": 15.5, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "clinic-hard-004", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 1, "seconds": 12.8, "timed_out": false, "engine": "base-pi-fixed"}
+{"task_id": "clinic-medium-004", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 1, "seconds": 8.7, "timed_out": false, "engine": "base-pi-fixed"}

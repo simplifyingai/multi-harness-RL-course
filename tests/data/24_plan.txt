@@ -1,0 +1,40 @@
+baseline_eval.py · pass@1 on held-out tasks, in every harness
+  tasks     24 of 50 held out (airline, clinic), round-robin over database x difficulty: 6 buckets, 4 per bucket
+  harnesses mini-swe-agent 2.4.6, claude-code 2.1.290, pi 1.0.4
+  protocol  one attempt per cell · temperature 0 · 8 calls · replies capped at 1,024 tokens · 300 s per rollout
+  cells     72, one at a time
+  records   $COURSE_HOME/24-measuring/baseline/eval_base.jsonl (one line per rollout, as it ends)
+
+which 24 tasks: balanced() against a plain prefix
+                            airline              clinic
+                            easy   medium hard   easy   medium hard
+  balanced(tasks, 24)       4      4      4      4      4      4
+  tasks[:24], file order    4      5      3      4      5      3
+  tasks[:24], sorted by id  8      9      7      0      0      0
+  all 50 held-out tasks     8      10     7      8      10     7
+
+balanced(tasks, 24) picks, in the order the cells run:
+  airline-easy-001     How many flights depart from Brussels?
+  airline-hard-001     Which passenger spent the most on flights to Stockholm?
+  airline-medium-001   Which destination has the most flights departing from Milan?
+  clinic-easy-001      How many patients live in Murcia?
+  clinic-hard-001      Which doctor earned the most in fees from patients living in Seville?
+  clinic-medium-001    Which specialty has the most doctors?
+  airline-easy-002     How many passengers are from Austria?
+  airline-hard-002     List the passengers from Italy who booked a flight to Barcelona.
+  airline-medium-002   How many bookings were made for flight ZR721?
+  clinic-easy-002      How many doctors specialize in Psychiatry?
+  clinic-hard-002      List the patients who saw an Orthopedics doctor in October 2025.
+  clinic-medium-002    How many appointments did Dr. Rafael Eriksen have in 2024?
+  airline-easy-003     What is the average price of a Business class booking? Round to 2 decimal places.
+  airline-hard-003     How many different passengers from Brazil booked a flight departing from Athens?
+  airline-medium-003   How much has Nadia Park spent on bookings in total?
+  clinic-easy-003      How many appointments took place in April 2025?
+  clinic-hard-003      How many different patients born before 1950 had at least one Neurology appointment?
+  clinic-medium-003    How much has Yusuf Reyes paid in appointment fees in total?
+  airline-easy-004     How many flights departed in October 2025?
+  airline-hard-004     How many Economy class bookings were made at least 14 days before the flight's departure date?
+  airline-medium-004   What is the total amount paid for bookings on flights departing from Amsterdam?
+  clinic-easy-004      What was the highest fee charged for a single appointment in June 2025?
+  clinic-hard-004      List the doctors who had more than 10 appointments in 2024.
+  clinic-medium-004    Which doctor had the most appointments in April 2025?

@@ -1,0 +1,72 @@
+{"task_id": "airline-easy-001", "harness": "mini-swe-agent", "correct": true, "submitted": "8", "reason": "correct", "n_calls": 6, "seconds": 23.9, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-hard-001", "harness": "mini-swe-agent", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 8, "seconds": 29.3, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-medium-001", "harness": "mini-swe-agent", "correct": true, "submitted": "Vienna", "reason": "correct", "n_calls": 4, "seconds": 17.2, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-easy-001", "harness": "mini-swe-agent", "correct": true, "submitted": "30", "reason": "correct", "n_calls": 4, "seconds": 17.9, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-hard-001", "harness": "mini-swe-agent", "correct": true, "submitted": "Grace Torres", "reason": "correct", "n_calls": 8, "seconds": 31.6, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-medium-001", "harness": "mini-swe-agent", "correct": true, "submitted": "General Practice", "reason": "correct", "n_calls": 4, "seconds": 17.3, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-easy-002", "harness": "mini-swe-agent", "correct": true, "submitted": "6", "reason": "correct", "n_calls": 4, "seconds": 16.0, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-hard-002", "harness": "mini-swe-agent", "correct": true, "submitted": "Oscar Novak, Lucia Yamada, Dario Ortiz", "reason": "correct", "n_calls": 4, "seconds": 18.6, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-medium-002", "harness": "mini-swe-agent", "correct": true, "submitted": "4", "reason": "correct", "n_calls": 4, "seconds": 15.9, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-easy-002", "harness": "mini-swe-agent", "correct": true, "submitted": "3", "reason": "correct", "n_calls": 4, "seconds": 12.5, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-hard-002", "harness": "mini-swe-agent", "correct": true, "submitted": "Paula Nakamura, Astrid Lindqvist, Gabriel Carter", "reason": "correct", "n_calls": 7, "seconds": 28.9, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-medium-002", "harness": "mini-swe-agent", "correct": false, "submitted": "178", "reason": "expected '7', got '178'", "n_calls": 6, "seconds": 26.7, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-easy-003", "harness": "mini-swe-agent", "correct": true, "submitted": "404.21", "reason": "correct", "n_calls": 5, "seconds": 25.0, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-hard-003", "harness": "mini-swe-agent", "correct": false, "submitted": "1", "reason": "expected '4', got '1'", "n_calls": 6, "seconds": 26.8, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-medium-003", "harness": "mini-swe-agent", "correct": true, "submitted": "432.98", "reason": "correct", "n_calls": 5, "seconds": 20.0, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-easy-003", "harness": "mini-swe-agent", "correct": true, "submitted": "16", "reason": "correct", "n_calls": 4, "seconds": 16.6, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-hard-003", "harness": "mini-swe-agent", "correct": false, "submitted": "0", "reason": "expected '2', got '0'", "n_calls": 7, "seconds": 26.9, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-medium-003", "harness": "mini-swe-agent", "correct": true, "submitted": "523.0", "reason": "correct", "n_calls": 5, "seconds": 18.0, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-easy-004", "harness": "mini-swe-agent", "correct": true, "submitted": "5", "reason": "correct", "n_calls": 5, "seconds": 21.7, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-hard-004", "harness": "mini-swe-agent", "correct": false, "submitted": "0", "reason": "expected '255', got '0'", "n_calls": 6, "seconds": 24.2, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-medium-004", "harness": "mini-swe-agent", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 8, "seconds": 34.0, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-easy-004", "harness": "mini-swe-agent", "correct": true, "submitted": "181.5", "reason": "correct", "n_calls": 4, "seconds": 17.9, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-hard-004", "harness": "mini-swe-agent", "correct": true, "submitted": "Dario Eriksen, Adrian Lindqvist, Farah Bauer", "reason": "correct", "n_calls": 4, "seconds": 19.8, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-medium-004", "harness": "mini-swe-agent", "correct": true, "submitted": "Ben Ricci", "reason": "correct", "n_calls": 4, "seconds": 25.8, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-easy-001", "harness": "claude-code", "correct": true, "submitted": "8", "reason": "correct", "n_calls": 6, "seconds": 25.8, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-hard-001", "harness": "claude-code", "correct": true, "submitted": "Alba Barros", "reason": "correct", "n_calls": 6, "seconds": 30.3, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-medium-001", "harness": "claude-code", "correct": true, "submitted": "Vienna", "reason": "correct", "n_calls": 5, "seconds": 26.9, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-easy-001", "harness": "claude-code", "correct": false, "submitted": "2", "reason": "expected '30', got '2'", "n_calls": 4, "seconds": 17.0, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-hard-001", "harness": "claude-code", "correct": true, "submitted": "Grace Torres", "reason": "correct", "n_calls": 6, "seconds": 31.9, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-medium-001", "harness": "claude-code", "correct": true, "submitted": "General Practice", "reason": "correct", "n_calls": 5, "seconds": 25.7, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-easy-002", "harness": "claude-code", "correct": true, "submitted": "6", "reason": "correct", "n_calls": 5, "seconds": 25.7, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-hard-002", "harness": "claude-code", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 8, "seconds": 43.2, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-medium-002", "harness": "claude-code", "correct": true, "submitted": "4", "reason": "correct", "n_calls": 5, "seconds": 23.6, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-easy-002", "harness": "claude-code", "correct": true, "submitted": "3", "reason": "correct", "n_calls": 5, "seconds": 28.2, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-hard-002", "harness": "claude-code", "correct": false, "submitted": "Paula Patel, Astrid Lindqvist, Nadia Walsh, Aaron Novak, Paula Nakamura, Julia Kaur, Jonas Castro, Mateo Muller, Lars Hansen, Mei Torres, Gabriel Carter, Rosa Yamada, Julia Kaur, Farah Hansen", "reason": "expected 'Astrid Lindqvist, Gabriel Carter, Paula Nakamura', got 'Paula Patel, Astrid Lindqvist, Nadia Walsh, Aaron Novak, Paula Nakamura, Julia Kaur, Jonas Castro, Mateo Muller, Lars Hansen, Mei Torres, Gabriel Carter, Rosa Yamada, Julia Kaur, Farah Hansen' (0 missing, 10 extra)", "n_calls": 6, "seconds": 36.1, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-medium-002", "harness": "claude-code", "correct": false, "submitted": "178", "reason": "expected '7', got '178'", "n_calls": 5, "seconds": 29.6, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-easy-003", "harness": "claude-code", "correct": true, "submitted": "404.21", "reason": "correct", "n_calls": 4, "seconds": 24.6, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-hard-003", "harness": "claude-code", "correct": false, "submitted": "1", "reason": "expected '4', got '1'", "n_calls": 6, "seconds": 30.5, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-medium-003", "harness": "claude-code", "correct": true, "submitted": "432.98", "reason": "correct", "n_calls": 4, "seconds": 20.4, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-easy-003", "harness": "claude-code", "correct": true, "submitted": "16", "reason": "correct", "n_calls": 4, "seconds": 20.8, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-hard-003", "harness": "claude-code", "correct": false, "submitted": "0", "reason": "expected '2', got '0'", "n_calls": 5, "seconds": 29.0, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-medium-003", "harness": "claude-code", "correct": true, "submitted": "523.0", "reason": "correct", "n_calls": 5, "seconds": 26.5, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-easy-004", "harness": "claude-code", "correct": true, "submitted": "5", "reason": "correct", "n_calls": 5, "seconds": 27.5, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-hard-004", "harness": "claude-code", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 8, "seconds": 41.8, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-medium-004", "harness": "claude-code", "correct": true, "submitted": "634.94", "reason": "correct", "n_calls": 6, "seconds": 30.0, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-easy-004", "harness": "claude-code", "correct": true, "submitted": "181.5", "reason": "correct", "n_calls": 4, "seconds": 20.9, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-hard-004", "harness": "claude-code", "correct": true, "submitted": "Dario Eriksen, Adrian Lindqvist, Farah Bauer", "reason": "correct", "n_calls": 5, "seconds": 29.8, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-medium-004", "harness": "claude-code", "correct": true, "submitted": "Ben Ricci", "reason": "correct", "n_calls": 4, "seconds": 21.4, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-easy-001", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 5, "seconds": 26.8, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-hard-001", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 7, "seconds": 34.6, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-medium-001", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 5, "seconds": 22.8, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-easy-001", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 5, "seconds": 23.8, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-hard-001", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 5, "seconds": 23.8, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-medium-001", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 5, "seconds": 23.2, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-easy-002", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 4, "seconds": 20.8, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-hard-002", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 6, "seconds": 28.5, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-medium-002", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 4, "seconds": 20.0, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-easy-002", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 5, "seconds": 25.0, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-hard-002", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 8, "seconds": 41.1, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-medium-002", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 4, "seconds": 19.3, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-easy-003", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 5, "seconds": 25.5, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-hard-003", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 5, "seconds": 25.9, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-medium-003", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 4, "seconds": 20.1, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-easy-003", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 4, "seconds": 20.9, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-hard-003", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 8, "seconds": 40.8, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-medium-003", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 5, "seconds": 24.0, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-easy-004", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 5, "seconds": 24.5, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-hard-004", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 7, "seconds": 34.1, "timed_out": false, "engine": "sft"}
+{"task_id": "airline-medium-004", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 7, "seconds": 32.5, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-easy-004", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 4, "seconds": 20.7, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-hard-004", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 5, "seconds": 24.2, "timed_out": false, "engine": "sft"}
+{"task_id": "clinic-medium-004", "harness": "pi", "correct": false, "submitted": null, "reason": "no answer.txt", "n_calls": 4, "seconds": 12.5, "timed_out": false, "engine": "sft"}

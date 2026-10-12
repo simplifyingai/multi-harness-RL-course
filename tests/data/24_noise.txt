@@ -1,0 +1,76 @@
+noise.py · how much of a score is noise
+  records   the project's run of 2026-10-06 (data/project_records/)
+            base, sft, rl: 72 cells each; pi from its re-run after chapter 19's sandbox fix
+  yours     none yet in $COURSE_HOME/24-measuring/baseline/eval_base.jsonl (uv run baseline_eval.py writes it)
+
+━━ the baseline (the project's base model)
+  checkpoint  mini-swe-agent    claude-code       pi                average
+  base        24/24 = 100.0%    15/24 = 62.5%     4/24 = 16.7%      59.7%
+  base's average is the plain mean over harnesses, each weighing the same:
+  (100.0 + 62.5 + 16.7) / 3 = 59.7%
+
+━━ one task's weight
+  24 tasks per harness: one task = 100 / 24 = 4.2 points
+
+━━ standard error and Wilson 95% interval, n = 24 (base)
+  standard error = sqrt(p x (1 - p) / n); near 75%: sqrt(0.75 x 0.25 / 24) = 8.8 points
+  harness         solved  pass@1  standard error  Wilson 95% interval
+  mini-swe-agent  24/24   100.0%  ±  0.0 points     86.2% to 100.0%
+  claude-code     15/24    62.5%  ±  9.9 points     42.7% to  78.8%
+  pi               4/24    16.7%  ±  7.6 points      6.7% to  35.9%
+  a perfect score has a standard error of 0, as if 100% were certain; Wilson's
+  interval at 24/24 still allows a true rate down to 86.2%
+
+━━ two identical models (simulated, seed 0)
+  both solve each task with chance 75%; 24 tasks each; 10,000 pairs of runs
+  gap in tasks         0       1       2       3      4+
+  simulated        13.7%   24.9%   21.4%   16.3%   23.7%
+  exact            13.3%   25.1%   21.3%   16.1%   24.2%
+  they differ by 8 points (2 tasks) or more in 61.3% of pairs (exact: 61.6%)
+  one run with one seed is one draw from this table: a gap of a task or two
+  between checkpoints is what identical models show most of the time
+
+━━ the ceiling at 100%
+  mini-swe-agent solved 24/24 at base: from there a later checkpoint can only tie or lose
+  later: sft 18/24 = 75.0%, rl 20/24 = 83.3%; a gain there could never have been measured
+  chance of 24/24 if the true rate were 99%: 78.6% · 95%: 29.2% · 90%: 8.0%
+  so 24/24 says the rate is above about 86% (Wilson), not that it is 100%
+
+━━ the average hides what moved
+  base -> sft: average 59.7% -> 61.1% (+1.4 points), while
+  mini-swe-agent -25.0, claude-code +8.3, pi +20.8 points
+
+━━ every pair of checkpoints, cell by cell (exact McNemar p)
+  pair         harness         cells  before  after  gained  lost  flipped  p      reading
+  base -> sft  mini-swe-agent     24      24     18       0     6        6  0.031  lost: beyond noise
+  base -> sft  claude-code        24      15     17       7     5       12  0.774  within noise
+  base -> sft  pi                 24       4      9       7     2        9  0.180  within noise
+  base -> rl   mini-swe-agent     24      24     20       0     4        4  0.125  within noise
+  base -> rl   claude-code        24      15     18       7     4       11  0.549  within noise
+  base -> rl   pi                 24       4      9       8     3       11  0.227  within noise
+  sft -> rl    mini-swe-agent     24      18     20       2     0        2  0.500  within noise
+  sft -> rl    claude-code        24      17     18       2     1        3  1.000  within noise
+  sft -> rl    pi                 24       9      9       5     5       10  1.000  within noise
+  p < 0.05 reads as beyond noise; anything else, within it
+  churn: claude-code base -> sft: 12 of 24 cells flipped, 10 of them cancel out: score +2
+  churn: claude-code base -> rl: 11 of 24 cells flipped, 8 of them cancel out: score +3
+  churn: pi sft -> rl: 10 of 24 cells flipped, 10 of them cancel out: score +0
+
+━━ when the evaluation itself is broken (chapter 19's sandbox)
+  pi, from the project's records, before and after the sandbox fix
+  base   3/24 ->  4/24
+  sft    0/24 ->  9/24
+  rl     0/24 ->  9/24
+  before the fix, 69 of 69 failed pi cells say 'no answer.txt':
+  the first box broke Pi's write tool (chapter 19), so the 0% after SFT and
+  RL measured the box, not the model
+
+━━ a score names its harness: the article's numbers, kept apart
+  ┌─ the article's own numbers (Hugging Face + Liquid AI) ─────────────────────┐
+  │ from "The ultimate guide to multi-harness RL" (2026)                       │
+  │ On its own tasks and models, the same direction of gap: mini-swe-agent     │
+  │ ahead of Claude Code by 29 points.                                         │
+  │ Its benchmark example: one model, GLM-5.2, on SWE-bench Pro, scored 23% in │
+  │ one harness and 52% in another.                                            │
+  └────────────────────────────────────────────────────────────────────────────┘
+  ours (the project's run of 2026-10-06, base): mini-swe-agent ahead of claude-code by 37.5 points
