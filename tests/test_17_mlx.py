@@ -230,6 +230,9 @@ def test_the_harness_script_runs_on_the_tiny_model(
 ) -> None:
     monkeypatch.setattr(tiny_harness, "pick_model", lambda fast: (tmp_path, "tiny"))
     monkeypatch.setattr(tiny_harness, "OUTPUT_CAP", CAP)
+    # The script imports lfm when it loads the model; other chapters ship an
+    # lfm.py too, so make sure the name means this chapter's module here.
+    monkeypatch.setitem(sys.modules, "lfm", lfm)
     saved = sys.argv
     sys.argv = ["tiny_harness.py"]
     out = io.StringIO()
