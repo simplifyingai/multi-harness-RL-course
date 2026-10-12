@@ -925,6 +925,14 @@ def test_a_capture_must_be_solved_and_already_one_trainable_row() -> None:
     assert capture.why_not_kept(attempt(True, 1, False)) == "solved, but not trainable"
 
 
+def test_the_compaction_runs_long_reply_passes_the_mark_whole() -> None:
+    ids = scripted_replies.encode(compaction.REPLIES[1].text)
+    assert len(ids) == compaction.LONG_REPLY_TOKENS
+    assert ids[-1] == scripted_engine.EOS  # under the cap: not cut
+    mark = compaction.WINDOW * compaction.PERCENT // compaction.PERCENT_OF
+    assert mark < compaction.LONG_REPLY_TOKENS < 1_024
+
+
 def test_start_sh_offers_the_replay_engine() -> None:
     usage = subprocess.run(
         ["bash", str(START_SH), "nonsense"], capture_output=True, text=True, check=False

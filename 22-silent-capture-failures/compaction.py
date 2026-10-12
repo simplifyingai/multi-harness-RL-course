@@ -15,7 +15,7 @@ proxy, in front of the scripted engine, with
   of that, about 1,000 tokens (95% is its default);
 
 and replies that make the context pass that mark at once: every prompt is
-about 10,000 tokens, and the second reply alone is about 1,000. It prints
+about 10,000 tokens, and the second reply alone is 1,010. It prints
 what Claude Code did: its exit code, its calls, how many prompts it sent,
 and how many ``compact_boundary`` events its own log holds (the mark it
 writes when it compacts), with what it was told about the tokens it read.
@@ -50,10 +50,12 @@ from scripted_replies import (
     MURCIA_COMMAND,
     TABLES_COMMAND,
     NotScriptedError,
+    Reply,
     ScriptClient,
     ScriptError,
     answer_reply,
     call_reply,
+    encode,
 )
 from tasks import DATA_DIR, find_task, task_instruction
 
@@ -63,11 +65,28 @@ RUN_NAME = "compaction"
 WINDOW_ENV, WINDOW = "CLAUDE_CODE_AUTO_COMPACT_WINDOW", 100_000
 PERCENT_ENV, PERCENT = "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", 1
 PERCENT_OF = 100
-# A thought long enough that the reply alone nears the 1,024-token cap.
-LONG_THOUGHT = "Count the patients in Murcia, then check the count. " * 18
+# The second reply alone passes the mark and stays under the 1,024-token cap.
+LONG_REPLY_TOKENS = 1_010
+SENTENCE = "Count the patients in Murcia, then check the count. "
+
+
+def long_reply() -> Reply:
+    """Write the count call with a thought that makes it exactly 1,010 tokens.
+
+    The scripted engine cuts every plain character into one token, so the
+    thought's length is the room left after the call itself.
+
+    Returns:
+        The reply.
+    """
+    room = LONG_REPLY_TOKENS - len(encode(call_reply(MURCIA_COMMAND, TOOLS, "").text))
+    thought = (SENTENCE * (room // len(SENTENCE) + 1))[:room]
+    return call_reply(MURCIA_COMMAND, tool=TOOLS, think=thought)
+
+
 REPLIES = (
     call_reply(TABLES_COMMAND, tool=TOOLS),
-    call_reply(MURCIA_COMMAND, tool=TOOLS, think=LONG_THOUGHT),
+    long_reply(),
     call_reply("echo 30 > answer.txt", tool=TOOLS, think="Write it."),
     answer_reply("30 patients live in Murcia; answer.txt holds 30."),
 )
