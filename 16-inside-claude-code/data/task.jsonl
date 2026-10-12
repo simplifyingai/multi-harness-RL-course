@@ -1,0 +1,1 @@
+{"task_id": "clinic-easy-001", "split": "test", "domain": "clinic", "difficulty": "easy", "db_file": "dbs/clinic.db", "question": "How many patients live in Murcia?", "gold_sql": "SELECT COUNT(*) FROM patients WHERE city = 'Murcia'", "answer": "30", "answer_type": "number"}
