@@ -53,6 +53,8 @@ Use 8119 when another program holds the project's port, 8100.
   Code's stream-json log (turns, replies, completion tokens, trained tokens
   per call), plus calls per row: Claude Code's one conversation should be
   one row, and a row that starts anywhere else is named with its cause.
+- `compaction.py`: asks Claude Code to compact its history early through the
+  proxy and prints what it did; `breakages.py` summarises with a relay.
 - `captures.py`: the run folders: what each run kept, and each call's exact
   reply read back out of its row.
 - `scripted_engine.py`, `scripted_replies.py`: chapter 21's scripted engine,

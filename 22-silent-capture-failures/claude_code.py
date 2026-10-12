@@ -286,7 +286,11 @@ def npx_install(folder: Path) -> Path:
 
 
 def clean_environment(
-    folder: Path, base_url: str, api_key: str, reminder: str | None
+    folder: Path,
+    base_url: str,
+    api_key: str,
+    reminder: str | None,
+    extra: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Build the only environment Claude Code gets.
 
@@ -296,6 +300,7 @@ def clean_environment(
         api_key: The capture session's id.
         reminder: ``CLAUDE_CODE_TOTAL_TOKENS_REMINDER``, or None to leave it
             unset (Claude Code's default).
+        extra: More settings, such as ``compaction.py``'s, or None.
 
     Returns:
         The environment.
@@ -328,6 +333,7 @@ def clean_environment(
     }
     if reminder is not None:
         env[REMINDER_ENV] = reminder
+    env.update(extra or {})
     return env
 
 
@@ -427,6 +433,7 @@ def run_claude(
     base_url: str,
     api_key: str,
     reminder: str | None,
+    extra_env: dict[str, str] | None = None,
 ) -> ClaudeRun:
     """Run Claude Code once, headless and boxed, in a prepared run folder.
 
@@ -437,6 +444,7 @@ def run_claude(
         base_url: Where Claude Code sends its calls (the proxy, or a relay).
         api_key: The capture session's id.
         reminder: The total-tokens note's setting, or None for the default.
+        extra_env: More settings for Claude Code's environment, or None.
 
     Returns:
         The finished run; its log is ``stream.jsonl`` in the folder.
@@ -445,7 +453,7 @@ def run_claude(
         ClaudeNotInstalledError: If the sandbox cannot be applied.
     """
     argv = boxed_command(binary, folder, instruction)
-    env = clean_environment(folder, base_url, api_key, reminder)
+    env = clean_environment(folder, base_url, api_key, reminder, extra_env)
     started = time.perf_counter()
     exit_code: int | None = None
     with (

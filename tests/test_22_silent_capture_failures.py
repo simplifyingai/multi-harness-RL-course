@@ -40,6 +40,7 @@ import breakages  # noqa: E402
 import capture  # noqa: E402
 import captures  # noqa: E402
 import claude_code  # noqa: E402
+import compaction  # noqa: E402
 import crosscheck  # noqa: E402
 import engine  # noqa: E402
 import lfm_files  # noqa: E402
@@ -858,6 +859,17 @@ def test_the_home_folder_is_written_as_a_tilde_only_where_its_name_ends() -> Non
     assert captures.cut_text(f"{home}/x", 99) == f"{home}/x"  # data stays as sent
 
 
+def test_the_best_attempt_is_solved_then_one_root_then_trainable() -> None:
+    def attempt(name: str, correct: bool, roots: int) -> capture.Attempt:
+        grade = capture.Grade(correct, "30", "correct" if correct else "wrong")
+        document = {"stats": {"n_roots": roots}, "trainable": True}
+        return capture.Attempt(Path(name), grade, document, [])
+
+    tried = [attempt("a", False, 1), attempt("b", True, 3), attempt("c", True, 2)]
+    assert min(tried, key=capture.rank).folder.name == "b"  # ties keep their order
+    assert min(tried[:1], key=capture.rank).folder.name == "a"
+
+
 def test_a_new_capture_clears_the_runs_made_from_the_last_one(
     capsys: pytest.CaptureFixture,
 ) -> None:
@@ -867,9 +879,10 @@ def test_a_new_capture_clears_the_runs_made_from_the_last_one(
     for name in ("note", "summary"):
         (runs / name).mkdir(parents=True)
     grade = capture.Grade(True, "30", "correct")
-    capture.keep(capture.Attempt(attempt, grade, {}, []))
+    capture.keep(capture.Attempt(attempt, grade, {}, []), "solved, but in 2 roots")
     record = json.loads((runs / captures.CAPTURE / captures.RUN_FILE).read_text())
     assert (record["name"], record["attempt"]) == ("capture", "attempt-2")
+    assert (record["clean"], record["flaw"]) == (False, "solved, but in 2 roots")
     assert not (runs / "note").exists() and not (runs / "summary").exists()
     assert "cleared the last capture's runs: note, summary" in capsys.readouterr().out
 
@@ -938,12 +951,15 @@ def write_run(folder: Path, correct: bool, tokenizer: str = "scripted") -> None:
     (folder / captures.ROLLOUT_FILE).write_text(json.dumps(chain_document([4, 5])))
 
 
-def test_breakages_refuses_a_capture_that_did_not_solve_its_task(
-    tmp_path: Path,
-) -> None:
+def test_an_unsolved_capture_is_replayed_under_its_grade(tmp_path: Path) -> None:
     write_run(tmp_path / "run", correct=False)
-    with pytest.raises(SystemExit, match="did not solve its task"):
-        breakages.load_capture(str(tmp_path / "run"))
+    loaded = breakages.load_capture(str(tmp_path / "run"))
+    assert len(loaded.replies) == 2
+    meta = {**loaded.meta, "flaw": "the task was not solved (wrong)"}
+    assert breakages.capture_grade(meta) == (
+        "grade wrong (not clean: the task was not solved (wrong))"
+    )
+    assert breakages.capture_grade({"grade": {"correct": True}}) == "grade correct"
     with pytest.raises(SystemExit, match="capture.py"):
         breakages.load_capture(str(tmp_path / "nothing"))
 
@@ -1083,7 +1099,14 @@ def test_one_capture_replayed_four_ways_is_caught_each_time(
 ) -> None:
     with proxy_stack(tmp_path / "stack", None) as stack:
         out = capture_break_and_crosscheck(stack, monkeypatch, capsys)
+        argv = ["compaction.py", "--proxy-url", stack.proxy_url]
+        assert run_script(compaction, argv, monkeypatch) == 0
+        asked = capsys.readouterr().out
     assert_each_break_is_caught(out)
+    # Claude Code 2.1.290, asked to compact past about 1,000 tokens, does not.
+    assert "claude    exit code 0" in asked
+    assert "log       compact_boundary events: 0" in asked
+    assert "result    no compaction: 1 root, 1 row" in asked
     runs = captures.runs_folder()
     assert (runs / "summary" / captures.FORWARDED_FILE).is_file()
     assert not (runs / "note" / captures.FORWARDED_FILE).exists()

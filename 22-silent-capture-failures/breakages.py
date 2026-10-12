@@ -5,7 +5,8 @@
 """Break one captured run three ways, and see what the proxy makes of each.
 
 ``capture.py`` recorded one Claude Code run through the capture proxy:
-solved, and one training row. This script replays it. The scripted engine
+solved, and one training row (or, when no attempt was, the best one,
+labelled with its grade). This script replays it. The scripted engine
 serves every call the exact tokens and log-probabilities the capture's
 engine sampled, so the model's replies are fixed, token for token, while
 everything else runs again for real: Claude Code (in the same folder, so
@@ -144,7 +145,7 @@ class Capture:
         meta: Its ``run.json``.
         document: The proxy's record of it.
         replies: Every call's exact reply.
-        task: The task it solved.
+        task: Its task.
     """
 
     folder: Path
@@ -557,7 +558,7 @@ def load_capture(name: str) -> Capture:
         The capture.
 
     Raises:
-        SystemExit: If it is missing, unsolved, or cannot be replayed.
+        SystemExit: If it is missing or cannot be replayed.
     """
     folder = named_run(name)
     try:
@@ -566,9 +567,21 @@ def load_capture(name: str) -> Capture:
         task = find_task(str(meta.get("task_id")))
     except CaptureError as error:
         raise SystemExit(f"{error}: record one first with capture.py") from error
-    if not (meta.get("grade") or {}).get("correct"):
-        raise SystemExit(f"{short_path(folder)} did not solve its task: no replay")
     return Capture(folder, meta, document, replies, task)
+
+
+def capture_grade(meta: dict[str, Any]) -> str:
+    """Say how the capture was graded, and why it is not clean if it is not.
+
+    Args:
+        meta: The capture's ``run.json``.
+
+    Returns:
+        Such as ``grade correct`` or ``grade wrong (not clean: ...)``.
+    """
+    graded = "correct" if (meta.get("grade") or {}).get("correct") else "wrong"
+    flaw = meta.get("flaw")
+    return f"grade {graded}" + (f" (not clean: {flaw})" if flaw else "")
 
 
 def replay_engine(client: CaptureClient, tokenizer: str) -> ScriptClient:
@@ -654,7 +667,8 @@ def main() -> None:
         f"{INDENT}capture {short_path(capture.folder)}: {capture.meta.get('engine')}"
         f" engine, {calls} calls, {plural(stats['n_roots'], 'root')}, "
         f"{plural(stats['n_sequences'], 'row')}, "
-        f"{stats['n_trainable_tokens']:,} tokens to train, grade correct"
+        f"{stats['n_trainable_tokens']:,} tokens to train, "
+        f"{capture_grade(capture.meta)}"
     )
     print(f"{INDENT}task {capture.task.task_id}: {capture.task.question}")
     print(f"{INDENT}breaks at call {at} of {calls}")

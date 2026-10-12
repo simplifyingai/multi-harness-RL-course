@@ -18,7 +18,10 @@ With the model (``ENGINE_PORT=8119 ./start.sh``), LFM2.5 answers at the
 training temperature, 1, and does not always solve the task, so the script
 tries up to ``--attempts`` times and keeps the first run that is solved and
 already one trainable row (the baseline every case breaks). Every attempt
-is kept as ``runs/attempt-N`` and printed, with why it was not kept.
+is kept as ``runs/attempt-N`` and printed, with why it was not kept. When
+none is, the best one is kept anyway (solved first, then one root), and
+its flaw is printed and written into its ``run.json``: the cases still show
+what each break does to its rows, under its grade.
 
 It also prints one thing the capture shows about the proxy: Claude Code
 begins its system prompt with a billing line, and the engine never sees it,
@@ -223,7 +226,25 @@ def record(
     return Attempt(folder, verdict, document, relay.requests)
 
 
-def keep(attempt: Attempt) -> None:
+def rank(attempt: Attempt) -> tuple[bool, bool, bool]:
+    """Order attempts from the best capture to the worst.
+
+    Args:
+        attempt: A recorded attempt.
+
+    Returns:
+        A key that sorts solved before unsolved, then one root before
+        several, then trainable before not (ties keep their order).
+    """
+    document = attempt.document
+    return (
+        not attempt.grade.correct,
+        document["stats"]["n_roots"] != 1,
+        not document["trainable"],
+    )
+
+
+def keep(attempt: Attempt, flaw: str = "") -> None:
     """Make an attempt the capture, and clear the runs made from the last one.
 
     breakages.py's runs replay the capture they were made from; left beside a
@@ -232,15 +253,24 @@ def keep(attempt: Attempt) -> None:
 
     Args:
         attempt: The attempt to keep.
+        flaw: Why it is not a clean capture ("" when it is), kept in run.json.
     """
     target = runs_folder() / CAPTURE
     if target.exists():
         shutil.rmtree(target)
     shutil.copytree(attempt.folder, target)
     record = json.loads((target / RUN_FILE).read_text(encoding="utf-8"))
-    record.update({"name": CAPTURE, "attempt": attempt.folder.name})
+    record.update(
+        {
+            "name": CAPTURE,
+            "attempt": attempt.folder.name,
+            "clean": not flaw,
+            "flaw": flaw,
+        }
+    )
     (target / RUN_FILE).write_text(json.dumps(record, indent=1) + "\n", "utf-8")
-    print(f"capture   {attempt.folder.name}, kept as {short_path(target)}")
+    label = f" (not clean: {flaw})" if flaw else ""
+    print(f"capture   {attempt.folder.name}, kept as {short_path(target)}{label}")
     stale = [name for name in CASE_RUNS if (runs_folder() / name).exists()]
     for name in stale:
         shutil.rmtree(runs_folder() / name)
@@ -342,7 +372,7 @@ def main() -> None:
     """Record attempts until one is solved, and keep it as the capture.
 
     Raises:
-        SystemExit: If nothing can run, or (status 1) no attempt was solved.
+        SystemExit: If nothing can run.
     """
     args = parse_args()
     if args.attempts < 1:
@@ -363,25 +393,26 @@ def main() -> None:
         f"{client.proxy_url}, in front of {model}"
     )
     print(f"{INDENT}task {task.task_id}: {task.question}")
-    solved = None
+    attempts = []
     for number in range(1, args.attempts + 1):
         try:
             attempt = record(number, task, client, binary, engine, tokenizer)
         except (ProxyError, ScriptError, ClaudeNotInstalledError, OSError) as error:
             raise SystemExit(f"attempt {number}: {tilde(str(error))}") from error
+        attempts.append(attempt)
         flaw = why_not_kept(attempt)
         if not flaw:
-            solved = attempt
             break
         print(f"{INDENT}not kept: {flaw}")
-    if solved is None:
+    chosen = min(attempts, key=rank)
+    flaw = why_not_kept(chosen)
+    if flaw:
         print(
-            f"no attempt in {args.attempts} was solved in one trainable row: no "
-            "capture kept (try again with more --attempts)"
+            f"no attempt in {args.attempts} was solved in one trainable row: keeping "
+            f"the best, {chosen.folder.name} ({flaw}), labelled so in its run.json"
         )
-        raise SystemExit(1)
-    keep(solved)
-    show(solved, painter)
+    keep(chosen, flaw)
+    show(chosen, painter)
 
 
 if __name__ == "__main__":
