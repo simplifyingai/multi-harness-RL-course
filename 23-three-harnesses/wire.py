@@ -529,6 +529,11 @@ def show(wiring: Wiring, folders: RunFolders) -> None:
         wiring: The wiring.
         folders: The run's folders (to tell its own variables from the base).
     """
+    print(f"━━ {wiring.harness}")
+    for line in wiring.settings:
+        print(f"  {line}")
+    for path in wiring.files:
+        print(f"  file      {short_path(path)}")
     argv = list(wiring.argv)
     instruction = argv.index("-p") + 1 if "-p" in argv else argv.index("-t") + 1
     argv[instruction] = "<the task>"

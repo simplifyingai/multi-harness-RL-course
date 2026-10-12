@@ -410,6 +410,22 @@ def test_wire_writes_each_file_and_refuses_an_unknown_harness(tmp_path: Path) ->
         wire.wire("opencode", folders, "t", "u", "k")
 
 
+def test_wire_py_prints_what_each_harness_reads(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["wire.py"])
+    wire.main()
+    out = capsys.readouterr().out
+    for harness in install.HARNESSES:
+        block = out.split(f"━━ {harness}\n")[1].split("━━")[0]
+        lines = [line.split()[0] for line in block.splitlines()]
+        assert "command" in lines and "env" in lines, harness
+    assert "  model.model_kwargs.api_base  http://127.0.0.1:8200/v1" in out
+    assert "  ANTHROPIC_BASE_URL             http://127.0.0.1:8200" in out
+    assert "  provider  intercept  (api openai-completions)" in out
+    assert out.count("  file      ") == 3  # mini's overlay, Pi's two files
+
+
 # ------------------------------------------------- the network watch
 
 
