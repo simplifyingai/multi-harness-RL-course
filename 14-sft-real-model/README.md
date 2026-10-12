@@ -1179,4 +1179,4 @@ length) much more reliably than how well it answers.
 - **Repetition loop**: greedy decoding repeating a phrase until the cap,
   learned here from templated reasons.
 
-Next: chapter 15, GRPO on the real model, and why exact tokens matter.
+Next: [chapter 15](../15-grpo-real-model/), GRPO on the real model, and why exact tokens matter.
