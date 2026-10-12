@@ -464,11 +464,14 @@ def evaluate(
     out_file: Path,
     done: Iterable[tuple[str, str]] = (),
     say: Callable[[str], None] = print,
+    before_cell: Callable[[], None] | None = None,
 ) -> list[Record]:
     """Run every (task, harness) cell once, appending each record as it ends.
 
     Cells run harness by harness, in the project's order. A cell already in
-    ``done`` (an interrupted run being finished) is skipped.
+    ``done`` (an interrupted run being finished) is skipped. ``before_cell``
+    runs before each cell that runs, so a long evaluation can wait while the
+    machine is busy with something else.
 
     Args:
         tasks: The held-out tasks.
@@ -477,6 +480,8 @@ def evaluate(
         out_file: The JSON-lines file each record is appended to.
         done: Cells already recorded in ``out_file``.
         say: Where progress lines go.
+        before_cell: Called before each cell runs (it may block, or raise
+            to stop the run).
 
     Returns:
         The records this call made.
@@ -493,6 +498,8 @@ def evaluate(
         if (harness, task.task_id) in skip:
             say(f"[{index}/{len(jobs)}] {harness} {task.task_id}: already recorded")
             continue
+        if before_cell is not None:
+            before_cell()
         record = run_rollout(task, harness, setup)
         append_record(out_file, record)
         made.append(record)

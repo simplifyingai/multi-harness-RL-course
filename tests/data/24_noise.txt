@@ -68,9 +68,9 @@ noise.py · how much of a score is noise
 ━━ a score names its harness: the article's numbers, kept apart
   ┌─ the article's own numbers (Hugging Face + Liquid AI) ─────────────────────┐
   │ from "The ultimate guide to multi-harness RL" (2026)                       │
-  │ On its own tasks and models, the same direction of gap: mini-swe-agent     │
-  │ ahead of Claude Code by 29 points.                                         │
-  │ Its benchmark example: one model, GLM-5.2, on SWE-bench Pro, scored 23% in │
-  │ one harness and 52% in another.                                            │
+  │ On its own test tasks, with the same LFM2.5-2.6B weights, the same         │
+  │ direction of gap: mini-swe-agent ahead of Claude Code by 29 points.        │
+  │ Its benchmark example, measured by Joel Niklaus: one model, GLM-5.2, on    │
+  │ SWE-bench Pro, at 23% in one harness and 52% in another.                   │
   └────────────────────────────────────────────────────────────────────────────┘
   ours (the project's run of 2026-10-06, base): mini-swe-agent ahead of claude-code by 37.5 points

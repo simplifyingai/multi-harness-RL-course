@@ -31,7 +31,9 @@ answers every cell with ``--script solve``). Then:
 * ``uv run baseline_eval.py --fast``: 4 tasks per harness (12 cells);
 * ``uv run baseline_eval.py``: 24 tasks per harness (72 cells);
 * ``--limit N`` and ``--harnesses a,b`` for any smaller subset, ``--resume``
-  to finish an interrupted run without repeating its cells.
+  to finish an interrupted run without repeating its cells, and
+  ``--before-cell CMD`` to run a command before each cell (one that waits
+  while the machine is busy lets a long run share the laptop).
 
 Only Python's standard library is needed.
 """
@@ -41,6 +43,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 import time
 from collections import Counter
@@ -87,6 +90,7 @@ DIFFICULTIES = ("easy", "medium", "hard")
 COLUMN = 7  # the picks table's columns: "medium" and a space
 LABEL_RE = re.compile(r"[A-Za-z0-9._-]+")  # a label names a file and a folder
 SECONDS_PER_MINUTE = 60
+PAUSE_SHOWN_S = 1.0  # a --before-cell wait this long or longer is printed
 
 
 @dataclass(frozen=True)
@@ -319,6 +323,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--script", choices=("auto", "solve", "mistakes", "none"))
     parser.add_argument("--resume", action="store_true", help="skip recorded cells")
     parser.add_argument("--plan", action="store_true", help="print the picks only")
+    parser.add_argument(
+        "--before-cell",
+        default=None,
+        help="a shell command run before each cell, waited for (it may wait "
+        "while the machine is busy); a non-zero exit stops the run",
+    )
     args = parser.parse_args()
     args.harnesses = [h.strip() for h in args.harnesses.split(",") if h.strip()]
     unknown = sorted(set(args.harnesses) - set(HARNESSES))
@@ -382,6 +392,39 @@ def refuse_other_versions(kept: list[Record], versions: dict[str, str]) -> None:
         )
 
 
+def waiter(command: str | None) -> Callable[[], None] | None:
+    """Turn ``--before-cell`` into the hook ``evaluate`` calls before each cell.
+
+    The command may take as long as it likes (waiting for a busy machine to
+    go quiet, say); a pause of a second or more is printed. If it exits with
+    any status but 0 the run stops, and ``--resume`` finishes it later.
+
+    Args:
+        command: The shell command, or None for no hook.
+
+    Returns:
+        The hook, or None.
+    """
+    if command is None:
+        return None
+
+    def wait() -> None:
+        started = time.perf_counter()
+        # A command line the learner typed, run as typed: a shell is the point.
+        status = subprocess.run(command, shell=True, check=False).returncode
+        waited = time.perf_counter() - started
+        if waited >= PAUSE_SHOWN_S:
+            minutes, rest = divmod(round(waited), SECONDS_PER_MINUTE)
+            print(f"  paused {minutes} min {rest} s for --before-cell", flush=True)
+        if status != 0:
+            raise SystemExit(
+                f"--before-cell exited {status}: stopped before the next cell; "
+                "run again with --resume to finish"
+            )
+
+    return wait
+
+
 def main() -> None:
     """Run the evaluation and print its table.
 
@@ -415,7 +458,14 @@ def main() -> None:
     setup = CellSetup(client, args.proxy_url, engine_url, script, label, versions)
     print("cells")
     done = [r.cell for r in kept]
-    evaluate(tasks, args.harnesses, setup, out_file, done)
+    evaluate(
+        tasks,
+        args.harnesses,
+        setup,
+        out_file,
+        done,
+        before_cell=waiter(args.before_cell),
+    )
     records = read_records(out_file)
     report(records, tasks, args.harnesses, label, time.perf_counter() - started)
     wanted = {(h, t.task_id) for h in args.harnesses for t in tasks}

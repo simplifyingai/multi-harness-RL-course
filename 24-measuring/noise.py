@@ -84,16 +84,20 @@ RULE = "━━"
 WIDTH = 78  # the boxed note's width
 NO_ANSWER = "no answer.txt"  # the grader's reason when there is no answer file
 # The article's own figures (Hugging Face and Liquid AI, "The ultimate guide
-# to multi-harness RL", 2026), on its own tasks and models: shown in a box of
-# their own and never set in a table beside ours. The harness gap is given as
-# a difference, so no number of theirs can be read as one of ours.
+# to multi-harness RL", 2026), on its own test tasks: shown in a box of their
+# own and never set in a table beside ours. Its sentences: "With the same
+# weights, LFM2.5-2.6B solved 62% of our test tasks under Mini-SWE-Agent and
+# 33% under Claude Code." and "On SWE-bench Pro, Joel Niklaus measured the
+# same model, GLM-5.2, at 23% in one harness and 52% in another." (it names
+# neither harness). The gap is given as a difference, so no number of theirs
+# can be read as one of ours.
 ARTICLE_TITLE = "the article's own numbers (Hugging Face + Liquid AI)"
 ARTICLE_SOURCE = 'from "The ultimate guide to multi-harness RL" (2026)'
 ARTICLE_LINES = (
-    "On its own tasks and models, the same direction of gap: "
-    "mini-swe-agent ahead of Claude Code by 29 points.",
-    "Its benchmark example: one model, GLM-5.2, on SWE-bench Pro, scored "
-    "23% in one harness and 52% in another.",
+    "On its own test tasks, with the same LFM2.5-2.6B weights, the same "
+    "direction of gap: mini-swe-agent ahead of Claude Code by 29 points.",
+    "Its benchmark example, measured by Joel Niklaus: one model, GLM-5.2, on "
+    "SWE-bench Pro, at 23% in one harness and 52% in another.",
 )
 
 

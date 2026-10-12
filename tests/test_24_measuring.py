@@ -472,6 +472,44 @@ def test_a_harness_at_another_version_is_refused(
         baseline_eval.check_harness("pi", EVERY[0], baseline_eval.Options())
 
 
+def test_before_cell_runs_before_each_cell_that_runs(
+    course_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    order: list[str] = []
+    monkeypatch.setattr(
+        evaluate,
+        "run_rollout",
+        lambda task, harness, setup: (
+            order.append(task.task_id) or record(task.task_id, harness, True)
+        ),
+    )
+    picked = evaluate.balanced(EVERY, 3)
+    done = [("pi", picked[0].task_id)]
+    evaluate.evaluate(
+        picked,
+        ["pi"],
+        None,
+        course_home / "eval.jsonl",
+        done,
+        lambda line: None,
+        before_cell=lambda: order.append("wait"),
+    )
+    assert order == ["wait", picked[1].task_id, "wait", picked[2].task_id]
+
+
+def test_the_before_cell_command_is_waited_for_and_can_stop_the_run(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    assert baseline_eval.waiter(None) is None
+    baseline_eval.waiter("true")()
+    assert capsys.readouterr().out == ""  # a quick check prints nothing
+    monkeypatch.setattr(baseline_eval, "PAUSE_SHOWN_S", 0.0)
+    baseline_eval.waiter("true")()
+    assert "paused 0 min 0 s for --before-cell" in capsys.readouterr().out
+    with pytest.raises(SystemExit, match="exited 3: .* --resume"):
+        baseline_eval.waiter("exit 3")()
+
+
 def test_a_label_names_a_file_so_it_stays_plain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
