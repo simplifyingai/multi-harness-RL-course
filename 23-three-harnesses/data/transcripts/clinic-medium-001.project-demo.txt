@@ -1,0 +1,18 @@
+[mini-swe-agent] task      clinic-medium-001: Which specialty has the most doctors?
+[mini-swe-agent] base URL  http://127.0.0.1:8200   (the capture proxy)
+[mini-swe-agent] API key   s623cd801372911fc9ee9a5a5   (this rollout's session id)
+[mini-swe-agent] folder    <task folder>
+[mini-swe-agent] running...
+[mini-swe-agent] task clinic-medium-001 · correct · answer 'General Practice' (expected 'General Practice') · reward 1.00 · calls 8 · 20 s
+[claude-code] task      clinic-medium-001: Which specialty has the most doctors?
+[claude-code] base URL  http://127.0.0.1:8200   (the capture proxy)
+[claude-code] API key   sb93a67f85e7188f1c60cd3f5   (this rollout's session id)
+[claude-code] folder    <task folder>
+[claude-code] running...
+[claude-code] task clinic-medium-001 · wrong · answer None (expected 'General Practice') · reward 0.00 · calls 7 · 37 s
+[pi] task      clinic-medium-001: Which specialty has the most doctors?
+[pi] base URL  http://127.0.0.1:8200   (the capture proxy)
+[pi] API key   s59ffaab8c51462663209c4bc   (this rollout's session id)
+[pi] folder    <task folder>
+[pi] running...
+[pi] task clinic-medium-001 · wrong · answer None (expected 'General Practice') · reward 0.00 · calls 1 · 5 s
