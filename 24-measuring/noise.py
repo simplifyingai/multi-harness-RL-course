@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from evaluate import Record, read_records, summarize
-from install import HARNESSES, PI
+from install import CLAUDE, HARNESSES, MINI, PI
 from lfm_files import chapter_home, short_path
 from stats import (
     PERCENT,
@@ -69,6 +69,8 @@ YOURS = Path("baseline") / "eval_base.jsonl"  # baseline_eval.py's records
 YOUR_LABEL = "your {name}"  # never "base" alone: that label is the project's
 RECORDS_PREFIX = "eval_"  # baseline_eval.py's files are eval_<label>.jsonl
 LABEL_WIDTH = 12
+SCORE_COLUMN = 18  # "15/24 = 62.5%" and room
+HARNESS_COLUMN = 15  # "mini-swe-agent" and a space
 TASKS = 24  # tasks per harness in the project's evaluation
 EXAMPLE_RATE = 0.75  # the plan's example: a standard error near 75%
 CEILING_RATES = (0.99, 0.95, 0.90)
@@ -160,11 +162,14 @@ def read_or_fail(path: Path) -> list[Record]:
         Its records.
 
     Raises:
-        FileNotFoundError: If it is missing or empty.
+        FileNotFoundError: If it is missing.
+        ValueError: If it holds no records, or a broken line.
     """
+    if not path.is_file():
+        raise FileNotFoundError(f"no file {short_path(path)}")
     records = read_records(path)
     if not records:
-        raise FileNotFoundError(f"no records in {short_path(path)}")
+        raise ValueError(f"no records in {short_path(path)}")
     return records
 
 
@@ -178,7 +183,8 @@ def your_checkpoints(files: list[Path]) -> list[Checkpoint]:
         One checkpoint per file that holds records.
 
     Raises:
-        FileNotFoundError: If a file named with ``--records`` has no records.
+        FileNotFoundError: If a file named with ``--records`` is missing.
+        ValueError: If one holds no records, or a broken line.
     """
     if not files:
         default = chapter_home() / YOURS
@@ -186,7 +192,14 @@ def your_checkpoints(files: list[Path]) -> list[Checkpoint]:
         if not records:
             return []
         return [Checkpoint(your_label(default), tuple(records))]
-    return [Checkpoint(your_label(path), tuple(read_or_fail(path))) for path in files]
+    checkpoints = []
+    for path in files:
+        label = your_label(path)
+        taken = sum(c.label.startswith(label) for c in checkpoints)
+        if taken:  # two files with one name: number the later ones
+            label = f"{label} ({taken + 1})"
+        checkpoints.append(Checkpoint(label, tuple(read_or_fail(path))))
+    return checkpoints
 
 
 def your_label(path: Path) -> str:
@@ -210,7 +223,7 @@ def label_width(checkpoints: list[Checkpoint]) -> int:
     Returns:
         The longest label plus two spaces, at least the project's 12.
     """
-    return max(LABEL_WIDTH, *(len(c.label) + 2 for c in checkpoints))
+    return max([LABEL_WIDTH, *(len(c.label) + 2 for c in checkpoints)])
 
 
 def heading(title: str, say: Callable[[str], None]) -> None:
@@ -269,11 +282,13 @@ def show_scores(
     harnesses = harnesses_of(checkpoints)
     width = label_width(checkpoints)
     heading(title, say)
-    columns = "".join(f"{h:<18}" for h in harnesses)
+    columns = "".join(f"{h:<{SCORE_COLUMN}}" for h in harnesses)
     say(f"  {'checkpoint':<{width}}{columns}average")
     for checkpoint in checkpoints:
         summary = summarize(list(checkpoint.records), harnesses)
-        cells = "".join(f"{score(*checkpoint.solved(h)):<18}" for h in harnesses)
+        cells = "".join(
+            f"{score(*checkpoint.solved(h)):<{SCORE_COLUMN}}" for h in harnesses
+        )
         average = summary["average_accuracy"]
         say(f"  {checkpoint.label:<{width}}{cells}{average:.1f}%")
     if not explain:
@@ -329,10 +344,11 @@ def show_intervals(
     perfect = False
     for harness in harnesses:
         solved, cells = checkpoint.solved(harness)
-        perfect = perfect or solved == cells
+        perfect = perfect or (cells > 0 and solved == cells)
         low, high = wilson_interval(solved, cells)
         say(
-            f"  {harness:<15} {solved:>2}/{cells:<3}  {pass_at_1(solved, cells):5.1f}%"
+            f"  {harness:<{HARNESS_COLUMN}} {solved:>2}/{cells:<3}  "
+            f"{pass_at_1(solved, cells):5.1f}%"
             f"  ± {standard_error(solved, cells):4.1f} points    "
             f"{low:5.1f}% to {high:5.1f}%"
         )
@@ -519,7 +535,7 @@ def show_pairs(
         say: Where lines go.
     """
     names = [f"{first.label} -> {second.label}" for first, second in pairs]
-    width = max(len("pair"), *(len(name) for name in names)) + 1
+    width = max([len("pair"), *(len(name) for name in names)]) + 1
     heading("every pair of checkpoints, cell by cell (exact McNemar p)", say)
     say(
         f"  {'pair':<{width}} harness         cells  before  after  gained  lost  "
@@ -537,7 +553,8 @@ def show_pairs(
             comparison = compare(before, after)
             old, new = sum(before.values()), sum(after.values())
             say(
-                f"  {name:<{width}} {harness:<15} {len(shared):>5}  {old:>6}  {new:>5}"
+                f"  {name:<{width}} {harness:<{HARNESS_COLUMN}} {len(shared):>5}  "
+                f"{old:>6}  {new:>5}"
                 f"  {len(comparison.gained):>6}  {len(comparison.lost):>4}"
                 f"  {comparison.flipped:>7}  {comparison.p_value:.3f}  "
                 f"{reading(comparison)}"
@@ -594,11 +611,11 @@ def show_article(ours: Checkpoint, say: Callable[[str], None]) -> None:
         for part in textwrap.wrap(line, inner, break_on_hyphens=False):
             say(f"  │ {part.ljust(inner)} │")
     say("  └" + "─" * (inner + 2) + "┘")
-    mini = pass_at_1(*ours.solved(HARNESSES[0]))
-    claude = pass_at_1(*ours.solved(HARNESSES[1]))
+    mini = pass_at_1(*ours.solved(MINI))
+    claude = pass_at_1(*ours.solved(CLAUDE))
     say(
-        f"  ours ({PROJECT_RUN}, {ours.label}): {HARNESSES[0]} ahead of "
-        f"{HARNESSES[1]} by {mini - claude:.1f} points"
+        f"  ours ({PROJECT_RUN}, {ours.label}): {MINI} ahead of "
+        f"{CLAUDE} by {mini - claude:.1f} points"
     )
 
 
@@ -644,8 +661,8 @@ def main() -> None:
     say("noise.py · how much of a score is noise")
     say(f"  records   {PROJECT_RUN} ({PROJECT_DIR.relative_to(HERE)}/)")
     say(
-        "            base, sft, rl: 72 cells each; pi from its re-run after "
-        "chapter 19's sandbox fix"
+        f"            base, sft, rl: {len(base.records)} cells each; pi from its "
+        "re-run after chapter 19's sandbox fix"
     )
     if yours:
         names = ", ".join(f"{c.label} ({len(c.records)} cells)" for c in yours)

@@ -25,7 +25,9 @@ Only Python's standard library is needed.
 from __future__ import annotations
 
 import json
+import os
 import statistics
+import sys
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
@@ -48,6 +50,9 @@ from wire import Options, wire
 
 PERCENT = 100.0
 LABEL_WIDTH = 12  # the project's label column
+HARNESS_COLUMN = 14  # "mini-swe-agent", the longest harness name
+TASK_COLUMN = 18  # "airline-medium-001", the longest task id
+CALLS_COLUMN = 8  # "8 calls"
 EVAL_FOLDER = "eval"  # COURSE_HOME/24-measuring/runs/eval/<label>/<harness>/<task>
 # What ended a run, in two or three words, from run_one's longer sentence.
 STOP_LABELS = (
@@ -175,19 +180,49 @@ def read_records(path: Path) -> list[Record]:
 def append_record(path: Path, record: Record) -> None:
     """Append one record to a JSON-lines file, and flush it to disk.
 
+    The line goes out in one write and is forced to the disk, so a run that
+    is stopped (Ctrl-C, a crash, the power) loses at most the cell it was in.
+    A home folder an answer may name is written ``~``.
+
     Args:
         path: The file (created with its folder if needed).
         record: The record.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(asdict(record)) + "\n")
+        handle.write(tilde(json.dumps(asdict(record))) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def drop_torn_tail(path: Path) -> bool:
+    """Cut a half-written last line, left by a run stopped mid-write.
+
+    Every complete record ends with a newline, so anything after the last
+    newline is a line that never finished. Cutting it lets ``--resume`` read
+    the file and run that cell again.
+
+    Args:
+        path: The records file.
+
+    Returns:
+        True when something was cut.
+    """
+    if not path.is_file():
+        return False
+    data = path.read_bytes()
+    if not data or data.endswith(b"\n"):
+        return False
+    with path.open("r+b") as handle:
+        handle.truncate(data.rfind(b"\n") + 1)
+    return True
 
 
 def balanced(tasks: list[Task], limit: int | None) -> list[Task]:
     """Take up to ``limit`` tasks, round-robin over (database, difficulty).
 
-    The project's ``cli.balanced``, unchanged: a plain ``tasks[:limit]``
+    The project's ``cli.balanced``, unchanged in what it picks (it copies
+    each bucket before taking from it): a plain ``tasks[:limit]``
     depends on the file's order, and a file sorted by name would give the
     first database's tasks only.
 
@@ -259,7 +294,7 @@ def format_table(summaries: dict[str, dict[str, Any]], harnesses: list[str]) -> 
         The table.
     """
     width = max(len(h) for h in [*harnesses, "average"]) + 2
-    label_width = max(LABEL_WIDTH, *(len(label) + 2 for label in summaries))
+    label_width = max([LABEL_WIDTH, *(len(label) + 2 for label in summaries)])
     header = "checkpoint".ljust(label_width)
     header += "".join(h.rjust(width) for h in harnesses)
     lines = [header + "average".rjust(width)]
@@ -343,6 +378,12 @@ def run_rollout(task: Task, harness: str, setup: CellSetup) -> Record:
 
     Returns:
         The cell's record.
+
+    Raises:
+        ProxyError: If the proxy refuses the session or cannot be reached.
+        OSError: If the cell's folder cannot be made or the harness cannot
+            start.
+        HarnessInstallError: If the sandbox cannot be applied (nothing runs).
     """
     folders = prepare_run(cell_folder(setup.label, harness, task), task)
     labels = {"task_id": task.task_id, "harness": harness}
@@ -386,7 +427,11 @@ def run_rollout(task: Task, harness: str, setup: CellSetup) -> Record:
     )
     run = {"record": asdict(record), "facts": asdict(facts)}
     run["network"] = process.network.as_dict()
-    save_run(folders, document, run)
+    try:
+        save_run(folders, document, run)
+    except OSError as error:  # the evidence is lost, never the record
+        where = f"{harness} {task.task_id}"
+        print(f"  evidence not kept for {where}: {tilde(str(error))}", file=sys.stderr)
     return record
 
 
@@ -403,12 +448,12 @@ def cell_line(index: int, total: int, record: Record) -> str:
     """
     width = len(str(total))
     verdict = "correct" if record.correct else "wrong  "
-    answer = "none" if record.submitted is None else repr(record.submitted)
+    answer = "none" if record.submitted is None else tilde(repr(record.submitted))
     calls = f"{record.n_calls} call" + ("" if record.n_calls == 1 else "s")
     return (
-        f"[{index:>{width}}/{total}] {record.harness:<14} {record.task_id:<18} "
-        f"{verdict} · {calls:<8} · {record.seconds:5.1f} s · "
-        f"{record.stop} · answer {answer}"
+        f"[{index:>{width}}/{total}] {record.harness:<{HARNESS_COLUMN}} "
+        f"{record.task_id:<{TASK_COLUMN}} {verdict} · {calls:<{CALLS_COLUMN}} · "
+        f"{record.seconds:5.1f} s · {record.stop} · answer {answer}"
     )
 
 
@@ -435,6 +480,11 @@ def evaluate(
 
     Returns:
         The records this call made.
+
+    Raises:
+        ProxyError: If the proxy refuses a session or cannot be reached.
+        OSError: If a cell cannot run or its record cannot be written.
+        HarnessInstallError: If the sandbox cannot be applied.
     """
     jobs = [(task, harness) for harness in harnesses for task in tasks]
     skip = set(done)

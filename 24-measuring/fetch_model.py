@@ -43,6 +43,7 @@ from lfm_files import (
     model_folder,
     ours_folder,
     short_path,
+    tilde,
 )
 
 # Each file's SHA-256 at the pinned revision, as chapter 10 pinned them.
@@ -183,16 +184,18 @@ def fetch(names: tuple[str, ...]) -> Path:
             allow_patterns=list(names),
         )
     except HfHubHTTPError as error:  # before OSError: it is one too
-        first = str(error).splitlines()[0]
+        first = tilde(str(error).splitlines()[0])
         raise FetchError(f"the Hub refused {FOUR_BIT.repo_id}: {first}") from error
     except UNREACHABLE as error:
         raise FetchError(
-            f"could not reach the Hugging Face Hub ({error}); the first run needs "
-            "the internet, and a broken download resumes where it stopped"
+            f"could not reach the Hugging Face Hub ({tilde(str(error))}); the first "
+            "run needs the internet, and a broken download resumes where it stopped"
         ) from error
     except OSError as error:
         where = short_path(folder)
-        raise FetchError(f"could not write into {where}: {error}") from error
+        raise FetchError(
+            f"could not write into {where}: {tilde(str(error))}"
+        ) from error
     check_files(folder, names)
     return folder
 

@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from collections import Counter
@@ -53,6 +54,7 @@ from evaluate import (
     CellSetup,
     Record,
     balanced,
+    drop_torn_tail,
     evaluate,
     format_table,
     read_records,
@@ -82,6 +84,8 @@ MODEL_LABEL = "base"  # the untrained model: the project's first checkpoint
 PROBE_FOLDER = "version-probe"
 NO_KEY = "none-yet"  # the probe runs before any session, so with no API key
 DIFFICULTIES = ("easy", "medium", "hard")
+COLUMN = 7  # the picks table's columns: "medium" and a space
+LABEL_RE = re.compile(r"[A-Za-z0-9._-]+")  # a label names a file and a folder
 SECONDS_PER_MINUTE = 60
 
 
@@ -134,12 +138,15 @@ def picks_table(picks: list[Picks], domains: list[str]) -> list[str]:
         The table's lines.
     """
     width = max(len(p.name) for p in picks) + 2
-    head = "".join(f"{d:<21}" for d in domains)
-    sub = "".join("".join(f"{x:<7}" for x in DIFFICULTIES) for _ in domains)
+    database = COLUMN * len(DIFFICULTIES)  # one column per difficulty under it
+    head = "".join(f"{d:<{database}}" for d in domains)
+    sub = "".join("".join(f"{x:<{COLUMN}}" for x in DIFFICULTIES) for _ in domains)
     lines = [" " * width + head, " " * width + sub]
     for pick in picks:
         row = "".join(
-            f"{pick.counts.get((d, x), 0):<7}" for d in domains for x in DIFFICULTIES
+            f"{pick.counts.get((d, x), 0):<{COLUMN}}"
+            for d in domains
+            for x in DIFFICULTIES
         )
         lines.append(pick.name.ljust(width) + row)
     return lines
@@ -223,7 +230,7 @@ def check_harness(harness: str, task: Task, options: Options) -> str:
                 "installing it (install.py)",
                 flush=True,
             )
-        ensure(harness, True, read_record())  # never replaces another version
+        ensure(harness, install=True, records=read_record())  # never replaces one
         folder = chapter_home() / RUNS_FOLDER / PROBE_FOLDER / harness
         folders = prepare_run(folder, task)
         probe = wire(
@@ -319,7 +326,60 @@ def parse_args() -> argparse.Namespace:
         parser.error(f"--harnesses: choose from {', '.join(HARNESSES)}")
     if args.limit is not None and args.limit < 1:
         parser.error("--limit: at least 1 task")
+    if args.label is not None and not LABEL_RE.fullmatch(args.label):
+        parser.error("--label: letters, digits, '.', '_' and '-' only")
     return args
+
+
+def kept_records(out_file: Path, resume: bool) -> list[Record]:
+    """Read what an earlier run of this label recorded, if it may go on.
+
+    Args:
+        out_file: The label's records file.
+        resume: Whether ``--resume`` was given.
+
+    Returns:
+        The records already in the file ([] for a fresh run).
+
+    Raises:
+        SystemExit: If the file holds records and ``--resume`` was not given,
+            or a line in it is broken.
+    """
+    if resume and drop_torn_tail(out_file):
+        print("records   cut a half-written last line: that cell runs again")
+    try:
+        kept = read_records(out_file)
+    except ValueError as error:
+        raise SystemExit(f"{error}: delete that line, then --resume") from error
+    if kept and not resume:
+        raise SystemExit(
+            f"{short_path(out_file)} already holds {len(kept)} records: "
+            "--resume to finish that run, or --label to start another"
+        )
+    return kept
+
+
+def refuse_other_versions(kept: list[Record], versions: dict[str, str]) -> None:
+    """Refuse to finish a run whose records name another harness version.
+
+    Args:
+        kept: The records already in the file.
+        versions: Each harness's version now.
+
+    Raises:
+        SystemExit: If a kept record was made with another version.
+    """
+    other = [
+        r
+        for r in kept
+        if r.harness in versions and r.version not in ("", versions[r.harness])
+    ]
+    if other:
+        first = other[0]
+        raise SystemExit(
+            f"{first.harness} {first.task_id} was recorded with {first.version}, "
+            f"not {versions[first.harness]}: start a new --label"
+        )
 
 
 def main() -> None:
@@ -327,8 +387,9 @@ def main() -> None:
 
     Raises:
         SystemExit: If the stack is down, a harness is refused, the records
-            file already exists without ``--resume``, or (status 1) a run's
-            network watch saw more than this machine.
+            file already exists without ``--resume`` (or holds a broken line,
+            or another harness version), or (status 1) a run's network watch
+            saw more than this machine.
     """
     args = parse_args()
     started = time.perf_counter()
@@ -344,24 +405,21 @@ def main() -> None:
     script = chosen_script(args.script or "auto", engine)
     label = args.label or (MODEL_LABEL if engine == "model" else f"scripted-{script}")
     out_file = records_path(label)
-    kept = read_records(out_file)
-    if kept and not args.resume:
-        raise SystemExit(
-            f"{short_path(out_file)} already holds {len(kept)} records: "
-            "--resume to finish that run, or --label to start another"
-        )
+    kept = kept_records(out_file, args.resume)
     print_protocol(tasks, args.harnesses, out_file, print)
     print(f"  engine    {engine} at {engine_url} ({tokens} tokens) · script: {script}")
     print("versions")
     options = Options()
     versions = {h: check_harness(h, tasks[0], options) for h in args.harnesses}
+    refuse_other_versions(kept, versions)
     setup = CellSetup(client, args.proxy_url, engine_url, script, label, versions)
     print("cells")
     done = [r.cell for r in kept]
     evaluate(tasks, args.harnesses, setup, out_file, done)
     records = read_records(out_file)
     report(records, tasks, args.harnesses, label, time.perf_counter() - started)
-    outside = [r for r in records if r.loopback_only is False]
+    wanted = {(h, t.task_id) for h in args.harnesses for t in tasks}
+    outside = [r for r in records if r.cell in wanted and r.loopback_only is False]
     if outside:
         cells = ", ".join(f"{r.harness} {r.task_id}" for r in outside)
         print(f"network   NOT loopback-only (or a sample was lost) in: {cells}")

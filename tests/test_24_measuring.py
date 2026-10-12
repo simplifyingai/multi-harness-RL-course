@@ -371,6 +371,23 @@ def test_your_records_are_read_and_paired_on_the_cells_both_ran(
     assert "your scripted-solve (1 cells)" in out and "your base" not in out
 
 
+def test_two_records_files_with_one_name_get_two_labels(tmp_path: Path) -> None:
+    for folder in ("one", "two"):
+        path = tmp_path / folder / "eval_base.jsonl"
+        evaluate.append_record(path, record("airline-easy-001", "pi", True))
+    files = [tmp_path / "one" / "eval_base.jsonl", tmp_path / "two" / "eval_base.jsonl"]
+    labels = [c.label for c in noise.your_checkpoints(files)]
+    assert labels == ["your base", "your base (2)"]
+
+
+def test_only_a_perfect_score_gets_the_zero_error_note() -> None:
+    for correct, noted in ((False, False), (True, True)):
+        checkpoint = noise.Checkpoint("x", (record("a", "pi", correct),))
+        lines: list[str] = []
+        noise.show_intervals(checkpoint, lines.append)
+        assert any("perfect score" in line for line in lines) is noted
+
+
 def test_noise_refuses_an_empty_records_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
@@ -433,7 +450,9 @@ def test_a_missing_harness_is_installed_before_it_is_checked(
     calls = []
     monkeypatch.setattr(baseline_eval, "resolved_version", lambda name: "")
     monkeypatch.setattr(
-        baseline_eval, "ensure", lambda name, fresh, records: calls.append(fresh)
+        baseline_eval,
+        "ensure",
+        lambda name, install, records: calls.append(install),
     )
     monkeypatch.setattr(
         baseline_eval, "probe_version", lambda name, *args: install.PINS[name].version
@@ -447,10 +466,104 @@ def test_a_harness_at_another_version_is_refused(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(baseline_eval, "resolved_version", lambda name: "1.0.4")
-    monkeypatch.setattr(baseline_eval, "ensure", lambda *args: None)
+    monkeypatch.setattr(baseline_eval, "ensure", lambda *args, **kwargs: None)
     monkeypatch.setattr(baseline_eval, "probe_version", lambda *args: "1.0.5")
     with pytest.raises(SystemExit, match="REFUSED · pi reports '1.0.5'"):
         baseline_eval.check_harness("pi", EVERY[0], baseline_eval.Options())
+
+
+def test_a_label_names_a_file_so_it_stays_plain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["baseline_eval.py", "--label", "../x"])
+    with pytest.raises(SystemExit):
+        baseline_eval.parse_args()
+    monkeypatch.setattr(sys, "argv", ["baseline_eval.py", "--label", "base-fast"])
+    assert baseline_eval.parse_args().label == "base-fast"
+
+
+def test_resume_cuts_a_half_written_last_line_and_runs_that_cell_again(
+    course_home: Path, capsys: Any
+) -> None:
+    path = baseline_eval.records_path("base")
+    evaluate.append_record(path, record("airline-easy-001", "pi", True))
+    with path.open("a") as handle:
+        handle.write('{"task_id": "airline-hard-001", "harn')  # the power went
+    with pytest.raises(SystemExit, match=r"eval_base.jsonl:2: .*delete that line"):
+        baseline_eval.kept_records(path, resume=False)
+    kept = baseline_eval.kept_records(path, resume=True)
+    assert [r.task_id for r in kept] == ["airline-easy-001"]
+    assert "cut a half-written last line" in capsys.readouterr().out
+    assert path.read_text().endswith("\n") and not evaluate.drop_torn_tail(path)
+
+
+def test_resume_refuses_records_made_with_another_harness_version() -> None:
+    kept = [record("a", "pi", True, version="1.0.3")]
+    with pytest.raises(SystemExit, match="recorded with 1.0.3, not 1.0.4"):
+        baseline_eval.refuse_other_versions(kept, {"pi": "1.0.4"})
+    baseline_eval.refuse_other_versions([record("a", "pi", True)], {"pi": "1.0.4"})
+
+
+class FakeSession:
+    """What the proxy answers when a session opens."""
+
+    session_id = "s0123456789abcdef01234567"
+
+
+class FakeClient:
+    """A capture client that remembers which sessions were closed."""
+
+    def __init__(self) -> None:
+        """Start with no session closed."""
+        self.closed: list[str] = []
+
+    def open_session(self, *args: Any) -> FakeSession:
+        """Open a session.
+
+        Args:
+            *args: What a real client takes.
+
+        Returns:
+            The session.
+        """
+        return FakeSession()
+
+    def close(self, session_id: str) -> bool:
+        """Close a session.
+
+        Args:
+            session_id: The session.
+
+        Returns:
+            True.
+        """
+        self.closed.append(session_id)
+        return True
+
+
+def test_a_cell_that_fails_still_closes_its_session(
+    course_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*args: Any) -> None:
+        raise OSError("the harness would not start")
+
+    monkeypatch.setattr(evaluate, "wire", broken)
+    client = FakeClient()
+    setup = evaluate.CellSetup(client, "http://proxy", "http://engine", "none", "t", {})
+    with pytest.raises(OSError, match="would not start"):
+        evaluate.run_rollout(EVERY[0], "pi", setup)
+    assert client.closed == [FakeSession.session_id]
+
+
+def test_an_answer_naming_the_home_folder_is_written_with_a_tilde(
+    course_home: Path,
+) -> None:
+    named = record("a", "pi", False, submitted=f"{Path.home()}/answer.txt")
+    line = evaluate.cell_line(1, 1, named)
+    assert str(Path.home()) not in line and "'~/answer.txt'" in line
+    path = course_home / "eval.jsonl"
+    evaluate.append_record(path, named)
+    assert str(Path.home()) not in path.read_text()
 
 
 # ------------------------------------------------- fetching what is missing
@@ -503,6 +616,18 @@ def test_a_fetched_file_that_is_not_the_pinned_one_is_deleted(tmp_path: Path) ->
     assert not wrong.exists()
     with pytest.raises(fetch_model.FetchError, match="missing after the download"):
         fetch_model.check_files(tmp_path, ("config.json",))
+
+
+def test_a_fetch_error_never_shows_the_home_folder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def full(*args: Any, **kwargs: Any) -> None:
+        raise OSError(28, "No space left on device", f"{Path.home()}/x")
+
+    monkeypatch.setattr(fetch_model, "snapshot_download", full)
+    with pytest.raises(fetch_model.FetchError) as caught:
+        fetch_model.fetch(("config.json",))
+    assert str(Path.home()) not in str(caught.value) and "'~/x'" in str(caught.value)
 
 
 def test_start_sh_fetches_before_any_engine_starts() -> None:
