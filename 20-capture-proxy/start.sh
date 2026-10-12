@@ -151,7 +151,7 @@ start_engine() {
     return 1
   fi
   wait_released "$ENGINE_PORT"
-  echo "starting the engine on $ENGINE_URL ${ENGINE_FLAGS:+($ENGINE_FLAGS)}"
+  echo "starting the engine on $ENGINE_URL${ENGINE_FLAGS:+ ($ENGINE_FLAGS)}"
   # ENGINE_FLAGS is split into words on purpose: it may hold several flags.
   # shellcheck disable=SC2086
   (cd "$HERE" && exec uv run engine.py --port "$ENGINE_PORT" $ENGINE_FLAGS) \

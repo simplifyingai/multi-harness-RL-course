@@ -75,7 +75,11 @@ ANTHROPIC_VERSION = "2023-06-01"  # the header every Anthropic client sends
 MADE_UP_KEY = "sk-made-up-key"
 QUESTION_TASK = "clinic-easy-001"  # the conversation the dialects probe sends
 SHORT_PROMPT = "Reply with the single word: ok"
-NEXT_PROMPT = "Again."  # each later call of the budget probe's conversation
+# The budget probe's conversation asks for a different number on every call.
+# Chapter 18's engine puts a reply back by its visible text, so replies that
+# read the same (eight times "ok") would all be put back as the latest one,
+# and the token chain would break from the third call on.
+COUNT_PROMPT = "Reply with the number {number} and nothing else."
 SHORT_REPLY_TOKENS = 64  # replies these probes do not need in full
 # The budget probe's conversation goes on call after call: its replies get
 # room to finish their reasoning, so each one is a whole turn.
@@ -693,7 +697,8 @@ def probe_budget(probes: Probes) -> None:
         f"a training session ({session.session_id}) with max_model_calls "
         f"{session.max_model_calls}: one conversation, one call after another"
     )
-    messages: list[dict[str, Any]] = [{"role": "user", "content": SHORT_PROMPT}]
+    first = COUNT_PROMPT.format(number=1)
+    messages: list[dict[str, Any]] = [{"role": "user", "content": first}]
     for number in range(1, MAX_MODEL_CALLS + 2):
         body = openai_body(messages, max_tokens=BUDGET_REPLY_TOKENS)
         reply = post(url, body, bearer(session.session_id))
@@ -711,12 +716,13 @@ def probe_budget(probes: Probes) -> None:
         )
         messages += [
             {"role": "assistant", "content": message.get("content")},
-            {"role": "user", "content": NEXT_PROMPT},
+            {"role": "user", "content": COUNT_PROMPT.format(number=number + 1)},
         ]
     summary = summarize(probes.client.rollout(session.session_id))
+    plural = "" if summary.roots == 1 else "s"
     print(
         f"{INDENT}the rollout: {summary.turns} turns recorded, in "
-        f"{summary.roots} conversation · budget stops: {summary.budget_stops}"
+        f"{summary.roots} conversation{plural} · budget stops: {summary.budget_stops}"
     )
 
 
