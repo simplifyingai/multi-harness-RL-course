@@ -21,6 +21,7 @@ SCHEMA_QUERY = "SELECT sql FROM sqlite_master WHERE type = 'table' ORDER BY name
 QUERY_SECONDS = 10.0  # a query running longer is stopped
 PROGRESS_EVERY = 10_000  # SQLite virtual-machine steps between time checks
 STOP_QUERY = 1  # what a progress handler returns to interrupt the query
+CONTINUE_QUERY = 0  # and to let it go on
 MAX_ROWS = 1_000  # rows read from a result; the answer needs the first few
 QUERY_ONLY = "PRAGMA query_only = ON"  # no statement may write, to any database
 REFUSED_ACTIONS = (sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH)
@@ -98,9 +99,9 @@ def run_query(path: Path, sql: str) -> list[tuple[Any, ...]]:
         """Tell SQLite to stop once the deadline passes.
 
         Returns:
-            STOP_QUERY after the deadline, else 0.
+            STOP_QUERY after the deadline, else CONTINUE_QUERY.
         """
-        return STOP_QUERY if time.monotonic() > deadline else 0
+        return STOP_QUERY if time.monotonic() > deadline else CONTINUE_QUERY
 
     try:
         connection = connect_read_only(path)

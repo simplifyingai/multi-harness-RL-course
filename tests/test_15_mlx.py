@@ -50,7 +50,7 @@ VOCAB = 64
 EOS = VOCAB - 1
 FIRST_PLAIN = 8  # ids below this are the chat markers
 HIDDEN = 64
-GROUP_SIZE = 32
+QUANT_GROUP = 32  # the 4-bit quantisation group (not a group of replies)
 BITS = 4
 RANK = 4
 CAP = 6  # reply cap for the scripts' runs on the tiny model
@@ -159,7 +159,7 @@ def tiny_model(seed: int = 0, dtype: mx.Dtype = mx.float32) -> nn.Module:
     model = lfm2.Model(lfm2.ModelArgs(**TINY_CONFIG))
     weights = [(k, v.astype(dtype)) for k, v in tree_flatten(model.parameters())]
     model.update(tree_unflatten(weights))
-    nn.quantize(model, group_size=GROUP_SIZE, bits=BITS)
+    nn.quantize(model, group_size=QUANT_GROUP, bits=BITS)
     mx.eval(model.parameters())
     return model
 

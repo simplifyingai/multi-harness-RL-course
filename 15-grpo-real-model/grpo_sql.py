@@ -453,8 +453,8 @@ def one_step(
             replies.extend(graded)
             continue
         rows = zip(sampled, graded, advantages, reencoded, strict=True)
-        for reply, grade, advantage, ids in rows:
-            replies.append(replace(grade, advantage=advantage))
+        for reply, scored, advantage, ids in rows:
+            replies.append(replace(scored, advantage=advantage))
             item, same, later = row_for(prompt, reply, advantage, ids)
             if item is not None and same is not None:
                 items.append(item)
@@ -547,7 +547,7 @@ def main() -> None:
         to_float32(model)
     apply_lora(model, LORA_RANK, LORA_SCALE, LORA_LAYERS)
     load_adapter(model, init)
-    reference = dict(adapter_weights(model)) if args.kl > 0 else None
+    reference = dict(adapter_weights(model)) if args.kl > NO_KL else None
     adapter = adapter_path(run_name(name_parts(args)))
     order = training_order(load_tasks(TRAIN_FILE), ORDER_SEED)
     report.print_title(SCRIPT, TITLE)

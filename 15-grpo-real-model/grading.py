@@ -89,7 +89,7 @@ def tool_call_sql(source: str) -> str | None:
     """
     try:
         tree = ast.parse(source.strip(), mode="eval").body
-    except SyntaxError:
+    except (SyntaxError, RecursionError, MemoryError):  # deeply nested model text too
         return None
     nodes = tree.elts if isinstance(tree, ast.List | ast.Tuple) else [tree]
     for node in nodes:
@@ -98,7 +98,7 @@ def tool_call_sql(source: str) -> str | None:
         for argument in [*node.args, *(keyword.value for keyword in node.keywords)]:
             try:
                 value = ast.literal_eval(argument)  # a literal only: never runs code
-            except (ValueError, SyntaxError, TypeError):
+            except (ValueError, SyntaxError, TypeError, RecursionError):
                 continue
             if isinstance(value, str) and value.strip():
                 return value.strip()
@@ -253,14 +253,15 @@ def write_answers(path: Path, answers: list[Answered]) -> None:
 
     Args:
         path: The file.
-        answers: One per question, all under one cap and one adapter.
+        answers: One per question, all under one cap and one adapter; an
+            empty list leaves the file as it is.
     """
+    if not answers:  # nothing new: never erase what is saved
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
-    kept: dict[str, Answered] = {}
-    if answers:
-        same = (answers[0].cap, answers[0].adapter)
-        saved = read_answers(path).items()
-        kept = {i: a for i, a in saved if (a.cap, a.adapter) == same}
+    same = (answers[0].cap, answers[0].adapter)
+    saved = read_answers(path).items()
+    kept = {i: a for i, a in saved if (a.cap, a.adapter) == same}
     kept.update({answered.task_id: answered for answered in answers})
     lines = [json.dumps(asdict(answered)) for answered in kept.values()]
     path.write_text("".join(line + "\n" for line in lines), encoding="utf-8")

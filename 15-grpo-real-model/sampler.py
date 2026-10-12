@@ -217,7 +217,9 @@ def sample(
             break
     rows = mx.stack(numbers).tolist() if numbers else []
     columns = [list(column) for column in zip(*rows, strict=True)]
-    recorded, entropies, full_logprobs, full_entropies = columns or [[]] * NUMBERS
+    if not columns:  # nothing drawn: four empty lists, one per number
+        columns = [[] for _ in range(NUMBERS)]
+    recorded, entropies, full_logprobs, full_entropies = columns
     return Sampled(
         tokens=tokens,
         logprobs=recorded,

@@ -47,11 +47,27 @@ class ChatTokenizer(Protocol):
     """What this module needs from a tokenizer (mlx-lm's, or a test's fake)."""
 
     def apply_chat_template(self, messages: list[dict[str, str]], **kwargs: Any) -> Any:
-        """Render a chat with the model's template."""
+        """Render a chat with the model's template.
+
+        Args:
+            messages: The chat, as ``{"role", "content"}`` dicts.
+            **kwargs: The template's options, such as ``tokenize``.
+
+        Returns:
+            The rendered chat (text or token ids, as the options ask).
+        """
         ...
 
     def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
-        """Turn text into token ids."""
+        """Turn text into token ids.
+
+        Args:
+            text: The text.
+            add_special_tokens: Whether to add the tokenizer's own markers.
+
+        Returns:
+            The token ids.
+        """
         ...
 
 
@@ -73,7 +89,11 @@ class TrainItem:
 
     @property
     def n_tokens(self) -> int:
-        """Number of trainable tokens."""
+        """Number of trainable tokens.
+
+        Returns:
+            How many positions the row trains.
+        """
         return len(self.positions)
 
 
@@ -86,6 +106,9 @@ def item_from_sequence(sequence: dict, advantage: float = 1.0) -> TrainItem | No
 
     Returns:
         The row, or None when it has no trainable tokens.
+
+    Raises:
+        KeyError: If the sequence has no ``input_ids`` or ``loss_mask``.
     """
     ids = sequence["input_ids"]
     mask = sequence["loss_mask"]

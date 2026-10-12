@@ -84,10 +84,10 @@ def token_logprobs(model: nn.Module, item: TrainItem) -> mx.array:
     hidden = model.model(tokens[:, :-1])[0]
     targets = mx.array([item.input_ids[p] for p in item.positions])
     # The token at position p is predicted by the scores at position p - 1.
-    rows = mx.array([p - 1 for p in item.positions])
+    before = mx.array([p - 1 for p in item.positions])
     pieces = []
     for start in range(0, len(item.positions), LOGIT_CHUNK):
-        index = rows[start : start + LOGIT_CHUNK]
+        index = before[start : start + LOGIT_CHUNK]
         logits = model.model.embed_tokens.as_linear(hidden[index]).astype(mx.float32)
         logp = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
         chosen = targets[start : start + LOGIT_CHUNK]
@@ -255,18 +255,19 @@ def grpo_update(
     """
     if not items:
         return Update(0, 0, None, [], [])
-    if kl_coef > 0 and reference is None:
+    use_kl = kl_coef > NO_KL
+    if use_kl and reference is None:
         raise ValueError("--kl needs the start adapter's weights to compare with")
-    references = score_with(model, reference, items) if kl_coef > 0 else []
+    references = score_with(model, reference, items) if use_kl else []
     loss_and_grad = nn.value_and_grad(
-        model, kl_loss(model, kl_coef) if kl_coef > 0 else clipped_loss(model)
+        model, kl_loss(model, kl_coef) if use_kl else clipped_loss(model)
     )
     n_tokens = sum(item.n_tokens for item in items)
     summed, loss_total = None, 0.0
     ratios: list[list[float]] = []
     drifts: list[list[float]] = []
     for index, item in enumerate(items):  # one row at a time, as the project does
-        extra = (references[index],) if kl_coef > 0 else ()
+        extra = (references[index],) if use_kl else ()
         outputs, grads = loss_and_grad(item, *extra)
         # Divide by the step's trained tokens, so the sum over its rows is
         # the gradient of the loss per token.
@@ -275,7 +276,7 @@ def grpo_update(
         mx.eval(summed, *outputs)
         loss_total += float(outputs[0])
         ratios.append(outputs[1].tolist())
-        drifts.append(outputs[2].tolist() if kl_coef > 0 else [])
+        drifts.append(outputs[2].tolist() if use_kl else [])
     optimizer.update(model, summed)
     mx.eval(model.trainable_parameters(), optimizer.state)
     return Update(

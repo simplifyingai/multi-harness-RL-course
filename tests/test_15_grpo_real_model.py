@@ -34,6 +34,7 @@ from grading import Answered  # noqa: E402
 from tasks import TEST_FILE, TRAIN_FILE, load_tasks  # noqa: E402
 
 BUDGET = lfm_files.TOKEN_BUDGET
+DEEP_TERMS = 200_000  # "1+1+..." this long is deeper than ast.parse can go
 
 
 def answered(task_id: str, correct: bool, tokens: int, **extra: object) -> Answered:
@@ -138,6 +139,12 @@ def test_queries_are_found_in_each_form_and_a_tool_call_is_never_run() -> None:
     )
     assert grading.extract_sql("x</think><|im_end|>") == (None, None)
     assert grading.tool_call_sql("[sql(__import__('os').getcwd())]") is None
+
+
+def test_a_tool_call_too_deep_to_parse_is_no_query_not_a_crash() -> None:
+    """Model text nested deeper than Python's parser can go reads as no query."""
+    deep = "+".join(["1"] * DEEP_TERMS)  # ast.parse raises RecursionError on it
+    assert grading.tool_call_sql(f"[sql({deep})]") is None
 
 
 def test_every_gold_query_grades_right_through_the_chapters_path(
@@ -367,6 +374,14 @@ def test_saved_answers_are_kept_only_for_the_same_cap_and_adapter(
     assert set(grading.read_answers(path)) == {"q4"}
     path.write_text("{not json\n")
     assert grading.read_answers(path) == {}
+
+
+def test_saving_no_answers_leaves_the_saved_ones(tmp_path: Path) -> None:
+    """An empty list of answers never erases a file of saved ones."""
+    path = tmp_path / "eval.jsonl"
+    grading.write_answers(path, [answered("q1", True, 5)])
+    grading.write_answers(path, [])
+    assert set(grading.read_answers(path)) == {"q1"}
 
 
 # ---------------------------------------------------------------- printing

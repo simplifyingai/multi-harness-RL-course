@@ -239,7 +239,7 @@ def print_routes(title: str, results: Sequence[RouteResult]) -> None:
         print(
             wrapped(
                 f"identical {same} of {len(result.ratios)}; largest |difference in "
-                f"log-probability| {max(differences):.6f}; ratio "
+                f"log-probability| {max(differences, default=0.0):.6f}; ratio "
                 f"{describe(result.ratios)}",
                 INDENT * 2,
             )
@@ -581,6 +581,7 @@ def print_ratio_summary(results: Sequence[StepResult], settings: Settings) -> No
     )
     engine = flat([flat(result.engine_ratios) for result in results])
     draw = settings.draw
+    moved: list[float] = []  # recorded minus engine log-probability, per token
     if draw.dtype == BF16 or draw.top_k:
         what = "bfloat16 numbers" if draw.dtype == BF16 else f"top-{draw.top_k} numbers"
         print(
