@@ -882,6 +882,13 @@ def test_the_recorded_runs_show_why_the_harnesses_differ() -> None:
     assert replay.CUT_RE.search(pi.calls[0].result).group(2) == "36,864"
 
 
+def test_a_binary_result_is_summarised_not_printed() -> None:
+    call = replay.Call(1, "read", "data.db", "SQLite format 3\x00" + "\x00" * 99)
+    (line,) = replay.result_lines(call)
+    assert line.startswith("SQLite format 3·") and "\x00" not in line
+    assert line.endswith("… a binary file, 115 characters")
+
+
 def test_the_transcripts_carry_no_personal_paths_or_names() -> None:
     for path in replay.TRANSCRIPTS.iterdir():
         text = path.read_text(encoding="utf-8")

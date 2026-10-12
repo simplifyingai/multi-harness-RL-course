@@ -50,6 +50,7 @@ FINISH_MARK = "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
 CUT_RE = re.compile(r"\n?\[course copy: ([\d,]+) of ([\d,]+) characters cut[^\]]*\]")
 SEPARATOR = "─" * 80  # mini-swe-agent's console draws one between steps
 STEP_RE = re.compile(r"^mini-swe-agent \(step (\d+), ")
+BINARY_MARK = "\x00"  # text holding a NUL byte is a binary file read as text
 LINES_SHOWN = 3
 WIDTH = 96
 LABEL_WIDTH = 8
@@ -387,12 +388,11 @@ def result_lines(call: Call) -> list[str]:
     """
     cut = CUT_RE.search(call.result)
     text = CUT_RE.sub("", call.result).rstrip("\n ")
-    if cut:
+    if cut or BINARY_MARK in text:  # a binary file: its bytes are not lines
         printable = "".join(ch if ch.isprintable() else "·" for ch in text[:60])
-        return [
-            f"{printable}… a binary file, {cut.group(2)} characters "
-            f"(this copy keeps {len(text):,})"
-        ]
+        size = cut.group(2) if cut else f"{len(text):,}"
+        kept = f" (this copy keeps {len(text):,})" if cut else ""
+        return [f"{printable}… a binary file, {size} characters{kept}"]
     lines = text.splitlines() or ["(no output)"]
     shown = [shorten(line) for line in lines[:LINES_SHOWN]]
     if len(lines) > LINES_SHOWN:
