@@ -82,7 +82,7 @@ About 258 minutes of video in 29 chapters.
 | # | chapter | minutes | status |
 | ---: | --- | ---: | --- |
 | 20 | [The capture proxy: recording a program you didn't write](20-capture-proxy/) | 10 | ready |
-| 21 | From calls to training rows | 8 | coming |
+| 21 | [From calls to training rows](21-calls-to-rows/) | 8 | ready |
 | 22 | Capture that fails without an error | 8 | coming |
 | 23 | Three real harnesses, wired by configuration only | 9 | coming |
 
