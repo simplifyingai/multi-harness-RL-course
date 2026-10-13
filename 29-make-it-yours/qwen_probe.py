@@ -100,7 +100,8 @@ LOG_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 DENY_RE = re.compile(r"Sandbox: [^(]+\((\d+)\) deny\(\d+\) network-outbound (\S+)")
 CLOCK_FORMAT = "%H:%M:%S"
 DUPLICATE_RE = re.compile(r"(\d+) duplicate reports? for Sandbox:")
-LOG_STAMP_RE = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+)")
+LOG_STAMP_RE = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d+)?)")
+SANDBOX_MARK = "Sandbox:"  # every line the sandbox writes carries it
 LOG_MARGIN = timedelta(seconds=1)  # log show takes whole seconds
 PROBE_KEY = "probe-key"  # the stand-in model takes any key
 SWITCH_RUNS = ("1-", "2-", "3-")  # the runs read for outside connections
@@ -129,6 +130,9 @@ class Refusals:
             lagging log is never read as a clean run.
         start: The window's start.
         end: The window's end.
+        unplaced: Sandbox lines in the log read whose time could not be
+            read, so they belong to no window: a change in the log's format
+            shows up here instead of as a clean zero.
     """
 
     own: int
@@ -137,6 +141,7 @@ class Refusals:
     lines: int
     start: datetime
     end: datetime
+    unplaced: int = 0
 
 
 @dataclass(frozen=True)
@@ -405,6 +410,9 @@ def run_once(
             exit_code = None
         finally:
             time.sleep(LOG_DELAY_S)  # a late connection reaches the catcher
+            # The group, not only the pid. A descendant that calls setsid()
+            # leaves the group and escapes this kill; the window then catches
+            # its refusals as another process's.
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(process.pid, signal.SIGKILL)
             process.wait()
@@ -476,12 +484,15 @@ def sandbox_refusals(
     """
     if text is None:
         return None
-    own = total = lines = 0
+    own = total = lines = unplaced = 0
     targets: dict[str, int] = {}
     for line in text.splitlines():
-        stamp = LOG_STAMP_RE.match(line)
-        inside = bool(stamp) and since <= datetime.fromisoformat(stamp.group(1)) < until
-        lines += inside and "Sandbox:" in line
+        moment = line_time(line)
+        if moment is None and SANDBOX_MARK in line:
+            unplaced += 1  # never dropped: counted, and printed
+        inside = moment is not None and since <= moment < until
+        if inside and SANDBOX_MARK in line:
+            lines += 1
         denial = DENY_RE.search(line)
         if denial is None:
             continue
@@ -494,7 +505,52 @@ def sandbox_refusals(
             continue  # another run's, or outside this window
         total += count
         targets[denial.group(2)] = targets.get(denial.group(2), 0) + count
-    return Refusals(own, total, targets, lines, since, until)
+    return Refusals(own, total, targets, lines, since, until, unplaced)
+
+
+def line_time(line: str) -> datetime | None:
+    """Read the time a log line was written, from its first characters.
+
+    Args:
+        line: One line of ``log show --style compact``.
+
+    Returns:
+        The time, or None when the line does not start with one.
+    """
+    stamp = LOG_STAMP_RE.match(line)
+    if stamp is None:
+        return None
+    try:
+        return datetime.fromisoformat(stamp.group(1))
+    except ValueError:
+        return None
+
+
+def read_all_refusals(probes: list[Probe]) -> None:
+    """Read the sandbox's log once, after the last run, and give each run its share.
+
+    The log is read from the first run's start to NOW, after a settle: a
+    repeat of the last run's refusal is folded into a "1 duplicate report"
+    line seconds after that run ended. Windows touch: each starts where the
+    run before it ended, so a refusal between two runs is never dropped.
+
+    Args:
+        probes: Every run, in order (each gets its ``refused``).
+    """
+    if not probes:
+        return
+    time.sleep(LOG_SETTLE_S)  # the log takes seconds to hold the last lines
+    text = read_sandbox_log(probes[0].since, datetime.now())
+    pids = frozenset(probe.pid for probe in probes)
+    if len(pids) != len(probes):
+        print(
+            "  WARNING   two runs had the same Qwen Code pid: their refusals are "
+            "told apart by window only"
+        )
+    start = probes[0].since
+    for probe in probes:
+        probe.refused = sandbox_refusals(text, probe.pid, start, probe.until, pids)
+        start = probe.until
 
 
 def fresh_folders(root: Path, name: str) -> RunFolders:
@@ -616,6 +672,7 @@ def sandbox_line(probe: Probe) -> str:
     refused = probe.refused
     if refused is None:
         return "  sandbox        log unreadable"
+    unplaced = f", {refused.unplaced} unplaced lines" if refused.unplaced else ""
     if not refused.total:
         start, end = (
             moment.strftime(CLOCK_FORMAT) for moment in (refused.start, refused.end)
@@ -623,13 +680,13 @@ def sandbox_line(probe: Probe) -> str:
         window = f"{start}–{end}"
         return (
             "  sandbox        refused 0 attempts (DNS or connect) (log read, window "
-            f"{window}, {refused.lines} sandbox lines of any kind)"
+            f"{window}, {refused.lines} sandbox lines of any kind{unplaced})"
         )
     what = ", ".join(f"{target} ×{n}" for target, n in sorted(refused.targets.items()))
     return (
         f"  sandbox        refused attempts (DNS or connect): {refused.own} by the "
         f"harness process, {refused.total} in all (with any other sandboxed process "
-        f"in the run's window; its own log): {what}"
+        f"in the run's window; its own log): {what}{unplaced}"
     )
 
 
@@ -748,13 +805,8 @@ def main() -> None:
             finally:
                 shutil.rmtree(run_folders.state, ignore_errors=True)
             probes.append((run, probe))
-    time.sleep(LOG_SETTLE_S)  # then every window is read from a settled log
-    text = read_sandbox_log(probes[0][1].since, probes[-1][1].until)
-    pids = frozenset(probe.pid for _, probe in probes)
+    read_all_refusals([probe for _, probe in probes])
     for run, probe in probes:
-        probe.refused = sandbox_refusals(
-            text, probe.pid, probe.since, probe.until, pids
-        )
         print("")
         print(f"{RULE} {run.name[0]}. {run.title}")
         print(f"  exit           {probe.exit_code}")

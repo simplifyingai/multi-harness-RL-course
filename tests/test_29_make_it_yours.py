@@ -665,6 +665,7 @@ def test_only_a_task_folder_in_runs_may_be_tried(
     for folder, why in (
         (tmp_path / "missing", "no such task folder"),
         (runs, "not a task folder"),
+        (runs / "x", "not a task folder"),  # a cell's folder, not its task
         (tmp_path, "not a task folder"),
         (sandbox.REPO_DIR, "not a task folder"),
     ):
@@ -672,7 +673,7 @@ def test_only_a_task_folder_in_runs_may_be_tried(
             sandbox.check_try_folder(folder)
     if sandbox.SANDBOX_EXEC.exists():
         monkeypatch.setattr(sandbox, "TRY_TIMEOUT_S", 1)
-        assert sandbox.try_in_box(task, ["/bin/sleep", "5"], 8239) == 124
+        assert sandbox.try_in_box(task, ["/bin/sleep", "5"], 8239) == sandbox.TIMED_OUT
         assert "exit: timed out after 1 s" in capsys.readouterr().out
 
 
@@ -818,6 +819,79 @@ def test_every_refusal_of_the_run_is_counted_not_only_the_harness() -> None:
     other = qwen_probe.sandbox_refusals(text, 1, start, end, frozenset({1, 7, 4242}))
     assert other is not None and (other.own, other.total) == (0, 1)
     assert qwen_probe.sandbox_refusals(None, 4242, start, end) is None
+
+
+def test_a_line_whose_time_cannot_be_read_is_counted_never_dropped() -> None:
+    text = (
+        "2026-10-14 01:36:01 E  kernel[0:1] Sandbox: node(5) deny(1) "
+        "file-read-data /x\n"
+        "14/10/2026 01:36:02 E  kernel[0:1] Sandbox: node(5) deny(1) "
+        "network-outbound remote:*:443\n"
+        "2026-13-40 01:36:03.5 E  kernel[0:1] Sandbox: curl(9) deny(1) file-read-data\n"
+    )
+    start, end = datetime(2026, 10, 14, 1, 36), datetime(2026, 10, 14, 1, 37)
+    found = qwen_probe.sandbox_refusals(text, 4242, start, end)
+    assert found is not None
+    # A stamp with no fraction is read; the other two are not, and say so.
+    assert (found.lines, found.unplaced, found.total) == (1, 2, 0)
+    probe = qwen_probe.Probe(name="u", refused=found)
+    assert qwen_probe.sandbox_line(probe).endswith(
+        "1 sandbox lines of any kind, 2 unplaced lines)"
+    )
+
+
+def test_the_log_is_read_to_now_so_the_last_runs_late_repeat_is_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, last = qwen_probe.Probe(name="1"), qwen_probe.Probe(name="6")
+    first.pid, first.since, first.until = (
+        10,
+        datetime(2026, 10, 14, 1, 36),
+        datetime(2026, 10, 14, 1, 36, 5),
+    )
+    last.pid, last.since, last.until = (
+        60,
+        datetime(2026, 10, 14, 1, 36, 7),
+        datetime(2026, 10, 14, 1, 36, 10),
+    )
+    late = datetime(2026, 10, 14, 1, 36, 13)  # after the last run's until
+    text = (
+        "2026-10-14 01:36:06.000 E  kernel[0:1] Sandbox: curl(77) deny(1) "
+        "network-outbound remote:*:80\n"  # between the two runs
+        f"{late.isoformat(sep=' ')}.000 E  kernel[0:1] 1 duplicate report for "
+        "Sandbox: node(60) deny(1) network-outbound /private/var/run/mDNSResponder\n"
+    )
+    asked: list[tuple[datetime, datetime]] = []
+
+    def fake_read(since: datetime, until: datetime) -> str:
+        asked.append((since, until))
+        return text
+
+    monkeypatch.setattr(qwen_probe, "LOG_SETTLE_S", 0)
+    monkeypatch.setattr(qwen_probe, "read_sandbox_log", fake_read)
+
+    class Clock(datetime):
+        """A clock stopped at the late repeat's time."""
+
+        @classmethod
+        def now(cls, tz: Any = None) -> datetime:
+            """The stopped time.
+
+            Args:
+                tz: Unused.
+
+            Returns:
+                The late repeat's time.
+            """
+            return late
+
+    monkeypatch.setattr(qwen_probe, "datetime", Clock)
+    qwen_probe.read_all_refusals([first, last])
+    assert asked[0][0] == first.since and asked[0][1] >= late
+    assert last.refused is not None and last.refused.own == 1
+    # The refusal between the runs falls in the second run's window.
+    assert last.refused.start == first.until and last.refused.total == 2
+    assert first.refused is not None and first.refused.total == 0
 
 
 def test_the_log_is_read_or_said_unreadable(monkeypatch: pytest.MonkeyPatch) -> None:

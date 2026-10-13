@@ -67,7 +67,13 @@ from install import (
 from lfm_files import MAX_CALLS, chapter_home, short_path, tilde
 from loopback import NetworkReport, NetworkWatch, describe
 from make_csv_tasks import ensure_tasks
-from sandbox import RUNS_FOLDER, SandboxError, sandbox_command, sandbox_params
+from sandbox import (
+    RUNS_FOLDER,
+    TASK_FOLDER_NAME,
+    SandboxError,
+    sandbox_command,
+    sandbox_params,
+)
 from scripted_replies import (
     NotScriptedError,
     Reply,
@@ -100,7 +106,7 @@ from wire import (
 )
 
 PROXY_URL = "http://127.0.0.1:8200"
-TASK_FOLDER, STATE_FOLDER = "task", "state"
+TASK_FOLDER, STATE_FOLDER = TASK_FOLDER_NAME, "state"
 RUN_FILE, ROLLOUT_FILE, STDERR_FILE = "run.json", "rollout.json", "stderr.txt"
 STOP_WAIT_S = 10
 SCRIPTS = ("auto", "solve", "none")

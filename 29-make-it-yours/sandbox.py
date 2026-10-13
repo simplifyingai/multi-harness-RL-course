@@ -69,6 +69,7 @@ EXAMPLE_RUN = "example"
 EXAMPLE_FOLDERS = ("task", "state")  # where an example run would write
 TRY_TIMEOUT_S = 30
 TIMED_OUT = 124  # the exit status `timeout` uses
+TASK_FOLDER_NAME = "task"  # every rollout's working folder (run_one.TASK_FOLDER)
 
 # Secret-file patterns, appended to the escaped home folder:
 # .env, .envrc, name.env, each with optional suffixes (.env.local); not .venv.
@@ -367,14 +368,18 @@ def check_try_folder(workdir: Path) -> Path:
         The resolved folder.
 
     Raises:
-        UnsafeSandboxPathError: If it does not exist, or is not inside the
-            chapter's runs folder.
+        UnsafeSandboxPathError: If it does not exist, is not named ``task``,
+            or is not inside the chapter's runs folder.
     """
     resolved = workdir.resolve()
     if not resolved.is_dir():
         raise UnsafeSandboxPathError(f"no such task folder: {workdir}")
     runs = (chapter_home() / RUNS_FOLDER).resolve()
-    if resolved == runs or not resolved.is_relative_to(runs):
+    if (
+        resolved.name != TASK_FOLDER_NAME
+        or resolved == runs
+        or not resolved.is_relative_to(runs)
+    ):
         raise UnsafeSandboxPathError(
             f"{short_path(resolved)} is not a task folder inside {short_path(runs)}; "
             "the command could write there"
