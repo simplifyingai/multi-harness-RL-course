@@ -891,3 +891,80 @@ def test_attempt1_says_what_it_restores_and_what_it_cannot(
     assert "guard     none (--attempt1)" in text
     assert "not restored: the engine's bfloat16 log-probabilities" in text
     assert grpo_harness.run_folder(args).name == "attempt1"
+
+
+def test_the_hooks_run_at_the_asked_concurrency_and_stop_on_a_missing_rollout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[int] = []
+    job = rollouts.Job(TRAIN[0], install.MINI, 1, 0, 0)
+
+    def fake_step(
+        jobs: list[rollouts.Job], setup: rollouts.RolloutSetup, concurrency: int
+    ) -> tuple[list[rollouts.RolloutRecord], list[rollouts.Failure]]:
+        seen.append(concurrency)
+        return [], [rollouts.Failure(job, "the harness would not start")]
+
+    monkeypatch.setattr(grpo_harness, "run_step", fake_step)
+    config = grpo_harness.Config(concurrency=1)
+    client = CaptureClient("http://127.0.0.1:1")
+    hooks = grpo_harness.make_hooks(config, client, client.proxy_url, "http://x", "r")
+    with pytest.raises(grpo_harness.RunStopped, match="1 of 1 rollouts made no record"):
+        hooks.run_rollouts([job])
+    assert seen == [1]
+    monkeypatch.setattr(sys, "argv", ["grpo_harness.py", "--concurrency", "2"])
+    assert grpo_harness.config_from(grpo_harness.parse_args()).concurrency == 2
+
+
+def test_an_engine_that_does_not_switch_stops_the_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    adapter = tmp_path / "adapter_step001.safetensors"
+    answers = iter([{"adapter": "base"}, {"adapter": lfm_files.short_path(adapter)}])
+    monkeypatch.setattr(grpo_harness, "engine_call", lambda *a: next(answers))
+    use_adapter = grpo_harness.adapter_switch("http://127.0.0.1:1")
+    with pytest.raises(grpo_harness.RunStopped, match="it samples with base"):
+        use_adapter(adapter)
+    assert use_adapter(adapter) == lfm_files.short_path(adapter)
+
+
+def test_a_run_that_died_in_its_first_step_is_not_appended_to(
+    course_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = course_home / "26-grpo-in-harnesses" / "grpo" / "grpo"
+    folder.mkdir(parents=True)
+    (folder / "rollouts.jsonl").write_text("{}\n")  # no metrics.jsonl yet
+    monkeypatch.setattr(sys, "argv", ["grpo_harness.py"])
+    with pytest.raises(SystemExit, match="already holds a run"):
+        grpo_harness.run_folder(grpo_harness.parse_args())
+
+
+def test_the_guard_demo_adds_an_adapter_only_for_a_step_that_trained() -> None:
+    def step(number: int, right: int, per_call: int) -> list[grpo_records.Rollout]:
+        reply = grpo_records.Reply(10, per_call, True, True)
+        row = grpo_records.Row(10 + per_call, 0, (reply,))
+        return [
+            grpo_records.Rollout(
+                number,
+                "t",
+                install.MINI,
+                i < right,
+                1,
+                per_call,
+                float(i < right),
+                1.0,
+                (row,),
+            )
+            for i in range(4)
+        ]
+
+    steps = [step(1, 2, 40), step(2, 0, 40), step(3, 2, 40), step(4, 2, 400)]
+    seen = grpo_harness.walk(steps, 150)
+    assert [one.updated for one in seen] == [True, False, True, False]
+    assert [one.sampled_with for one in seen] == [
+        "the SFT adapter",
+        "adapter_step001",
+        "adapter_step001",  # step 2 had no contrast: nothing new to sample with
+        "adapter_step003",
+    ]
+    assert seen[-1].verdict.stop and seen[-1].verdict.kept == "adapter_step001"

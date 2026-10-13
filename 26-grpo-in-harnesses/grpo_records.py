@@ -35,6 +35,7 @@ with the end-of-turn token). This module needs only the standard library.
 from __future__ import annotations
 
 import json
+import re
 import statistics
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
@@ -61,6 +62,9 @@ GROUP_SIZE = 4  # rollouts per task (the project's --group)
 TASKS_PER_STEP = 2  # tasks per step (the project's --tasks-per-step)
 ROLLOUTS_PER_STEP = GROUP_SIZE * TASKS_PER_STEP
 STAGE = "grpo"
+ADAPTER_STEP_RE = re.compile(r"adapter_step(\d+)")  # adapter_step004.safetensors
+OUTPUT_FOLDER = "grpo"  # grpo_harness.py's runs: COURSE_HOME/26-grpo-in-harnesses/grpo/
+RUN_NAME = "grpo"  # its default run
 SECONDS_DIGITS = 3  # rollout times are kept to the millisecond
 
 
@@ -237,8 +241,8 @@ class GuardVerdict:
 
     stop: bool
     median: float
-    kept: Any = None
-    blamed: Any = None
+    kept: Path | str | None = None
+    blamed: Path | str | None = None
 
 
 def step_length(rollouts: Iterable[Rollout]) -> StepLength:
@@ -262,7 +266,7 @@ def step_length(rollouts: Iterable[Rollout]) -> StepLength:
 
 def length_guard(
     rollouts: Iterable[Rollout],
-    history: Sequence[Any],
+    history: Sequence[Path | str | None],
     guard_tokens: float = GUARD_TOKENS,
 ) -> GuardVerdict:
     """The project's length guard, on one step's rollouts.
@@ -501,15 +505,15 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     """
     if not path.is_file():
         raise RecordsError(f"no file {short_path(path)}")
-    lines = [line for line in path.read_text("utf-8").splitlines() if line.strip()]
-    if not lines:
+    try:  # a UnicodeDecodeError and a JSONDecodeError are both ValueErrors
+        text = path.read_text("utf-8")
+        lines = [line for line in text.splitlines() if line.strip()]
+        records = [json.loads(line) for line in lines]
+    except ValueError as error:
+        raise RecordsError(f"{short_path(path)}: not JSON lines ({error})") from error
+    if not records:
         raise RecordsError(f"{short_path(path)} holds no records")
-    try:
-        return [json.loads(line) for line in lines]
-    except json.JSONDecodeError as error:
-        raise RecordsError(
-            f"{short_path(path)}: a line is not JSON ({error})"
-        ) from error
+    return records
 
 
 def read_metrics(folder: Path) -> list[dict[str, Any]]:
@@ -534,6 +538,36 @@ def read_metrics(folder: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def rollouts_per_step(folder: Path, records: int) -> int:
+    """How many rollouts each step ran, from the run's metrics.
+
+    Every step that ran its rollouts left a line: a step's metrics, or the
+    guard's stop line (whose rollouts were recorded too).
+
+    Args:
+        folder: The run's folder.
+        records: How many rollouts it recorded.
+
+    Returns:
+        Rollouts per step.
+
+    Raises:
+        RecordsError: If the metrics hold no step, or do not divide the
+            rollouts evenly.
+    """
+    steps = [
+        row
+        for row in read_jsonl(folder / METRICS_FILE)
+        if row.get("stage") == STAGE and "step" in row
+    ]
+    if not steps or records % len(steps):
+        raise RecordsError(
+            f"{short_path(folder)}: {records} rollouts do not split evenly into "
+            f"{len(steps)} steps"
+        )
+    return records // len(steps)
+
+
 def read_rollouts(folder: Path, per_step: int | None = None) -> list[Rollout]:
     """Read a run's rollouts, full records or slim ones.
 
@@ -554,7 +588,7 @@ def read_rollouts(folder: Path, per_step: int | None = None) -> list[Rollout]:
     """
     records = read_jsonl(folder / ROLLOUTS_FILE)
     if per_step is None and any("step" not in r for r in records):
-        per_step = max(1, len(records) // len(read_metrics(folder)))
+        per_step = rollouts_per_step(folder, len(records))
     out = []
     for index, record in enumerate(records):
         try:
@@ -579,7 +613,8 @@ def write_slim(source: Path, target: Path, say: Callable[[str], None]) -> None:
         say: Where to report what was written.
     """
     rollouts = read_jsonl(source / ROLLOUTS_FILE)
-    per_step = max(1, len(rollouts) // len(read_metrics(source)))
+    steps = len(read_metrics(source))
+    per_step = rollouts_per_step(source, len(rollouts))
     target.mkdir(parents=True, exist_ok=True)
     lines = [
         json.dumps(slim(record, index // per_step + 1))
@@ -588,7 +623,6 @@ def write_slim(source: Path, target: Path, say: Callable[[str], None]) -> None:
     (target / ROLLOUTS_FILE).write_text("\n".join(lines) + "\n", "utf-8")
     metrics = (source / METRICS_FILE).read_bytes()
     (target / METRICS_FILE).write_bytes(metrics)
-    steps = len(read_metrics(source))
     say(f"wrote {short_path(target)}: {len(lines)} rollouts, {steps} steps")
 
 
@@ -605,6 +639,27 @@ def named_adapter(summary: Path) -> str:
         RecordsError: If the summary is missing or names no adapter.
     """
     try:
-        return str(json.loads(summary.read_text("utf-8"))["adapter"])
-    except (OSError, ValueError, KeyError) as error:
+        adapter = json.loads(summary.read_text("utf-8"))["adapter"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
         raise RecordsError(f"{short_path(summary)}: no adapter named") from error
+    if not isinstance(adapter, str) or not adapter:
+        raise RecordsError(f"{short_path(summary)}: no adapter named")
+    return adapter
+
+
+def adapter_step(name: str) -> int:
+    """The step whose update saved an adapter, read from its name.
+
+    Args:
+        name: Such as ``adapter_step004`` or ``adapter_step004.safetensors``.
+
+    Returns:
+        Its step, such as 4.
+
+    Raises:
+        RecordsError: If the name holds no step number.
+    """
+    found = ADAPTER_STEP_RE.search(name)
+    if found is None:
+        raise RecordsError(f"{name} names no step's adapter")
+    return int(found[1])

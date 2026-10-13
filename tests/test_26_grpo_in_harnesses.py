@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import threading
 import time
@@ -436,10 +437,10 @@ def test_steps_says_when_the_guard_stopped_a_run(
     ) in out
 
 
-def test_steps_before_any_run_says_there_is_none_yet(
+def test_steps_before_any_run_names_the_missing_file(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
-    with pytest.raises(SystemExit, match="no GRPO steps recorded yet"):
+    with pytest.raises(SystemExit, match="no file .*grpo/grpo/rollouts.jsonl"):
         run_main(steps, ["steps.py"], monkeypatch, capsys)
 
 
@@ -544,8 +545,6 @@ def test_a_rollout_runs_in_its_own_folder_with_its_state_in_the_temp_folder(
         assert folders.state.name.startswith(f"mhrl-harness-{job.harness}-")
         assert folders.home.is_dir() and folders.tmp.is_dir()
     finally:
-        import shutil
-
         shutil.rmtree(folders.state)
 
 
@@ -599,3 +598,90 @@ def test_records_round_trip_through_the_reader(tmp_path: Path) -> None:
         grpo_records.Reply(7, 1, False, False),
     )
     assert row.new_tokens() == 5
+
+
+def test_a_rollouts_temporary_state_is_removed_however_it_ends(
+    course_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    states: list[Path] = []
+
+    def finished(folders: Any, job: rollouts.Job, _: Any) -> rollouts.RolloutRecord:
+        states.append(folders.state)
+        return rollouts.RolloutRecord(job.task.task_id, job.harness)
+
+    def crashed(folders: Any, job: rollouts.Job, _: Any) -> rollouts.RolloutRecord:
+        states.append(folders.state)
+        raise OSError("the harness would not start")
+
+    monkeypatch.setattr(rollouts, "rollout_in", finished)
+    rollouts.run_rollout(jobs(1)[0], setup())
+    monkeypatch.setattr(rollouts, "rollout_in", crashed)
+    with pytest.raises(OSError, match="would not start"):
+        rollouts.run_rollout(jobs(1)[0], setup())
+    assert len(states) == 2 and not any(state.exists() for state in states)
+
+
+def test_an_unreadable_proxy_record_fails_its_rollout_by_name() -> None:
+    said: list[str] = []
+
+    def broken(job: rollouts.Job, _: rollouts.RolloutSetup) -> rollouts.RolloutRecord:
+        raise KeyError("turns")
+
+    records, failed = rollouts.run_step(jobs(1), setup(), 1, said.append, broken)
+    assert records == [] and failed[0].reason.startswith(
+        "rollout failed: KeyError('turns')"
+    )
+    assert said == [f"  FAILED mini-swe-agent {TRAIN[0].task_id}: {failed[0].reason}"]
+
+
+def test_a_plan_needs_tasks_and_harnesses() -> None:
+    with pytest.raises(ValueError, match="at least one task and one harness"):
+        rollouts.plan_groups([], rollouts.TRAIN_HARNESSES, 1, 2)
+    with pytest.raises(ValueError, match="at least one task and one harness"):
+        rollouts.plan_groups(TRAIN, (), 1, 2)
+
+
+def test_a_summary_without_an_adapter_and_a_name_without_a_step_are_refused(
+    tmp_path: Path,
+) -> None:
+    summary = tmp_path / "summary.json"
+    for content in ('{"adapter": null}', "[1, 2]", '{"label": "rl"}', "{"):
+        summary.write_text(content)
+        with pytest.raises(grpo_records.RecordsError, match="no adapter named"):
+            grpo_records.named_adapter(summary)
+    assert grpo_records.adapter_step("runs/main/grpo/adapter_step004.safetensors") == 4
+    with pytest.raises(grpo_records.RecordsError, match="names no step's adapter"):
+        grpo_records.adapter_step("adapter_final.safetensors")
+
+
+def test_a_run_the_guard_stopped_splits_its_rollouts_by_every_step_line(
+    tmp_path: Path,
+) -> None:
+    # The project's records carry no step: it comes from the position, and a
+    # stopped run has one step of rollouts more than it has step metrics.
+    records = [
+        {k: v for k, v in json.loads(line).items() if k != "step"}
+        for line in (BUNDLE / "attempt1" / "rollouts.jsonl").read_text().splitlines()
+    ][:24]
+    for record in records:
+        record["sequences"] = []
+        del record["rows"]
+    (tmp_path / "rollouts.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in records) + "\n"
+    )
+    metrics = (BUNDLE / "attempt1" / "metrics.jsonl").read_text().splitlines()[:2]
+    stop = {"stage": "grpo", "step": 3, "stopped": "length_guard"}
+    (tmp_path / "metrics.jsonl").write_text("\n".join([*metrics, json.dumps(stop)]))
+    read = grpo_records.read_rollouts(tmp_path)
+    assert [r.step for r in read] == [1] * 8 + [2] * 8 + [3] * 8
+    (tmp_path / "metrics.jsonl").write_text("\n".join(metrics[:1]))
+    (tmp_path / "rollouts.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in records[:12]) + "\n"
+    )
+    assert len(grpo_records.read_rollouts(tmp_path)) == 12  # 12 in one step
+    (tmp_path / "metrics.jsonl").write_text("\n".join(metrics[:2]))
+    (tmp_path / "rollouts.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in records[:9]) + "\n"
+    )
+    with pytest.raises(grpo_records.RecordsError, match="do not split evenly"):
+        grpo_records.read_rollouts(tmp_path)

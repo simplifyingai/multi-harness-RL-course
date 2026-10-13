@@ -28,8 +28,6 @@ import grpo_records
 from lfm_files import chapter_home, short_path
 
 SCRIPT = "steps.py"
-GRPO_FOLDER = "grpo"  # grpo_harness.py's runs: COURSE_HOME/26-.../grpo/<run>
-RUN_NAME = "grpo"
 PERCENT = 100
 HEADER = "step  correct  calls  tokens/call: median   mean  rollout s (median)"
 
@@ -82,6 +80,7 @@ def print_steps(folder: Path, say: Callable[[str], None] = print) -> None:
         say: Where lines go.
     """
     rollouts = grpo_records.read_rollouts(folder)
+    note = stop_note(folder)  # read everything before printing anything
     say(f"{SCRIPT} · {short_path(folder)}")
     say(HEADER)
     for step in grpo_records.by_step(rollouts):
@@ -97,7 +96,6 @@ def print_steps(folder: Path, say: Callable[[str], None] = print) -> None:
             "the captured"
         )
         say("  rows, each shared prefix once")
-    note = stop_note(folder)
     if note:
         say(note)
 
@@ -109,7 +107,9 @@ def parse_args() -> argparse.Namespace:
         The arguments.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--run", default=RUN_NAME, help="one of this chapter's runs")
+    parser.add_argument(
+        "--run", default=grpo_records.RUN_NAME, help="one of this chapter's runs"
+    )
     parser.add_argument("--dir", type=Path, default=None, help="any run's folder")
     return parser.parse_args()
 
@@ -118,15 +118,15 @@ def main() -> None:
     """Print the steps of the run asked for.
 
     Raises:
-        SystemExit: If the run has no records yet, or they are not a GRPO run's.
+        SystemExit: If the run's records are missing or not a GRPO run's.
     """
     args = parse_args()
-    mine = chapter_home() / GRPO_FOLDER / args.run
+    mine = chapter_home() / grpo_records.OUTPUT_FOLDER / args.run
     folder = args.dir.expanduser() if args.dir else mine
     try:
         print_steps(folder)
     except grpo_records.RecordsError as error:
-        raise SystemExit(f"{SCRIPT}: no GRPO steps recorded yet ({error})") from error
+        raise SystemExit(f"{SCRIPT}: {error}") from error
 
 
 if __name__ == "__main__":

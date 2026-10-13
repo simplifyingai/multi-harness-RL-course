@@ -45,7 +45,6 @@ import argparse
 import json
 import shutil
 import statistics
-import sys
 import time
 import urllib.error
 import urllib.request
@@ -60,7 +59,7 @@ import mlx.nn as nn
 import mlx.optimizers as optim
 from baseline_eval import check_harness
 from capture_client import CaptureClient, ProxyError
-from grpo import StepRows, Update, grpo_update, step_rows
+from grpo import CLIP_EPSILON, StepRows, Update, grpo_update, step_rows
 from install import HarnessInstallError
 from lfm_files import GIGABYTE, chapter_home, course_home, pick_model, short_path
 from lora import (
@@ -73,7 +72,7 @@ from lora import (
     save_adapter,
 )
 from mlx_lm import load
-from rewards import TOKEN_BUDGET, call_reward_for, reward_for
+from rewards import MAX_CALLS, TOKEN_BUDGET, call_reward_for, reward_for
 from rollouts import (
     CONCURRENCY,
     TASK_SEED,
@@ -103,8 +102,8 @@ LEARNING_RATE = 1e-5  # the project's GRPO_LR
 ATTEMPT1_LEARNING_RATE = 4e-5  # attempt 1's: "ballooned replies by step 5"
 SEED = TASK_SEED  # the project's task-order seed (rollouts.py)
 GUARD_TOKENS = grpo_records.GUARD_TOKENS
-GRPO_FOLDER = "grpo"  # COURSE_HOME/26-grpo-in-harnesses/grpo/<run>/
-RUN_NAME = "grpo"
+GRPO_FOLDER = grpo_records.OUTPUT_FOLDER  # COURSE_HOME/26-grpo-in-harnesses/grpo/<run>/
+RUN_NAME = grpo_records.RUN_NAME
 ATTEMPT1_RUN_NAME = "attempt1"
 ATTEMPT1_FOLDER = "grpo_attempt1"  # attempt 1's folder in the project's runs/main
 ATTEMPT1_SUMMARY = "summary_rl_attempt1.json"  # the evaluation of the adapter it kept
@@ -125,6 +124,7 @@ PERCENT = 100
 SECONDS_PER_MINUTE = 60
 GUARD_SWEEP = (150, 100, 60)  # guards the demo compares
 CONTINUATION = "       "  # under "[grpo] "
+CLIP_RANGE = f"{1 - CLIP_EPSILON:.1f} to {1 + CLIP_EPSILON:.1f}"  # "0.8 to 1.2"
 BUNDLE_SOURCE = (
     "data/project_grpo/attempt1 (the project's runs/main/grpo_attempt1, slimmed)"
 )
@@ -151,6 +151,7 @@ class Config:
         max_tokens: Rows longer than this are skipped (and counted).
         harnesses: The training harnesses, alternated group by group.
         seed: The task order's seed.
+        concurrency: Rollouts run at the same time.
     """
 
     steps: int = DEFAULT_STEPS
@@ -164,6 +165,7 @@ class Config:
     max_tokens: int = MAX_TRAIN_TOKENS
     harnesses: tuple[str, ...] = TRAIN_HARNESSES
     seed: int = SEED
+    concurrency: int = CONCURRENCY
 
     def reward(self, correct: bool, n_sampled: int, n_calls: int) -> float:
         """The reward this run trains on.
@@ -245,7 +247,7 @@ def engine_call(url: str, path: str, body: dict[str, Any] | None = None) -> Any:
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", "replace")[:300]
         raise SystemExit(f"{SCRIPT}: the engine refused {path}: {detail}") from error
-    except (urllib.error.URLError, OSError, ValueError) as error:
+    except (OSError, ValueError) as error:  # URLError is an OSError
         reason = f"{SCRIPT}: cannot reach the engine at {url}: {error}"
         raise SystemExit(reason) from error
 
@@ -279,16 +281,26 @@ def adapter_switch(engine_url: str) -> Callable[[Path | None], str]:
     """
 
     def use_adapter(path: Path | None) -> str:
-        """POST /admin/adapter: the project's ``use_adapter``.
+        """POST /admin/adapter: the project's ``use_adapter``, its answer checked.
 
         Args:
             path: An adapter file, or None for the base model.
 
         Returns:
             What the engine now samples with.
+
+        Raises:
+            RunStopped: If the engine says it samples with something else:
+                every later rollout would come from the wrong weights.
         """
         body = {"path": str(path) if path else None}
-        return str(engine_call(engine_url, "/admin/adapter", body).get("adapter"))
+        using = engine_call(engine_url, "/admin/adapter", body).get("adapter")
+        expected = short_path(path) if path else BASE  # the engine's own labels
+        if using != expected:
+            raise RunStopped(
+                f"asked the engine for {expected}, and it samples with {using}"
+            )
+        return expected
 
     return use_adapter
 
@@ -443,7 +455,7 @@ def step_lines(
         lines.append(
             f"{CONTINUATION}ratio per token {metrics['ratio_min']:.3f} to "
             f"{metrics['ratio_max']:.3f}, {PERCENT * metrics['clipped_share']:.1f}% "
-            f"outside 0.8 to 1.2 · loss/token {metrics['loss_per_token']:.4f} · "
+            f"outside {CLIP_RANGE} · loss/token {metrics['loss_per_token']:.4f} · "
             f"{metrics['adapter']}, now the engine's"
         )
     else:
@@ -609,6 +621,7 @@ class GuardStep:
         length: Its tokens per call, both ways.
         correct: Its share of right rollouts, in percent.
         verdict: The guard's verdict.
+        updated: Whether the step made an update (a group had contrast).
     """
 
     number: int
@@ -616,6 +629,31 @@ class GuardStep:
     length: grpo_records.StepLength
     correct: float
     verdict: grpo_records.GuardVerdict
+    updated: bool
+
+
+def made_an_update(step: list[grpo_records.Rollout]) -> bool:
+    """Whether a recorded step trained: at least one of its groups had contrast.
+
+    Args:
+        step: The step's rollouts.
+
+    Returns:
+        True when the step made an update (and saved an adapter).
+    """
+    return any(given.rows for given in grpo_records.exposure(step).values())
+
+
+def adapter_label(step: int) -> str:
+    """The adapter a step's update saved, as the project names it.
+
+    Args:
+        step: The step.
+
+    Returns:
+        Such as ``adapter_step004``.
+    """
+    return ADAPTER_NAME.format(step=step).removesuffix(ADAPTER_SUFFIX)
 
 
 def walk(steps: list[list[grpo_records.Rollout]], limit: float) -> list[GuardStep]:
@@ -628,16 +666,19 @@ def walk(steps: list[list[grpo_records.Rollout]], limit: float) -> list[GuardSte
     Returns:
         Every step the guard saw; the last one stopped it, if it stopped.
     """
-    history = [START_LABEL]
+    history: list[Path | str | None] = [START_LABEL]
     seen = []
     for number, step in enumerate(steps, start=1):
         verdict = grpo_records.length_guard(step, history, limit)
         correct = PERCENT * sum(r.correct for r in step) / len(step)
         length = grpo_records.step_length(step)
-        seen.append(GuardStep(number, history[-1], length, correct, verdict))
+        updated = not verdict.stop and made_an_update(step)
+        sampled_with = str(history[-1])
+        seen.append(GuardStep(number, sampled_with, length, correct, verdict, updated))
         if verdict.stop:
             break
-        history.append(ADAPTER_NAME.format(step=number).removesuffix(ADAPTER_SUFFIX))
+        if updated:  # as the loop does: only an update adds an adapter
+            history.append(adapter_label(number))
     return seen
 
 
@@ -680,9 +721,11 @@ def guard_demo(
         if one.verdict.stop:
             verdict = one.verdict
             say(f"{head}STOP: {verdict.blamed} made these; keep {verdict.kept}")
-        else:
-            made = ADAPTER_NAME.format(step=one.number).removesuffix(ADAPTER_SUFFIX)
+        elif one.updated:
+            made = adapter_label(one.number)
             say(f"{head}under {limit:.0f}: update {one.number} -> {made}")
+        else:
+            say(f"{head}under {limit:.0f}: no group had contrast, no update")
     say("")
     last = seen[-1]
     if not last.verdict.stop:
@@ -693,7 +736,8 @@ def guard_demo(
             f"  stopped at step {last.number}, before update {last.number}: "
             f"adapter_final = {last.verdict.kept}"
         )
-        say(f"  (the run itself went on to make {len(steps)} updates)")
+        updates = sum(1 for step in steps if made_an_update(step))
+        say(f"  (the run itself went on to make {updates} updates)")
         if passed is not None:
             median = passed.length.median
             times = median / seen[0].length.median
@@ -704,23 +748,11 @@ def guard_demo(
     if kept_by_project:
         say(
             f"  the project kept {kept_by_project}, the adapter step "
-            f"{adapter_number(kept_by_project) + 1}'s rollouts came from"
+            f"{grpo_records.adapter_step(kept_by_project) + 1}'s rollouts came from"
         )
         say("  (replay.py attempt1 shows how it scored)")
     for line in guard_sweep(steps):
         say(line)
-
-
-def adapter_number(name: str) -> int:
-    """The step whose update saved an adapter, read from its name.
-
-    Args:
-        name: Such as ``adapter_step004``.
-
-    Returns:
-        Its step, such as 4.
-    """
-    return int(name.removesuffix(ADAPTER_SUFFIX).rsplit("step", 1)[1])
 
 
 def guard_sweep(steps: list[list[grpo_records.Rollout]]) -> list[str]:
@@ -806,6 +838,7 @@ def config_from(args: argparse.Namespace) -> Config:
         guard_tokens=args.guard_tokens,
         max_tokens=args.max_tokens,
         seed=args.seed,
+        concurrency=args.concurrency,
     )
 
 
@@ -848,7 +881,9 @@ def run_folder(args: argparse.Namespace) -> Path:
     """
     name = args.run or (ATTEMPT1_RUN_NAME if args.attempt1 else RUN_NAME)
     folder = chapter_home() / GRPO_FOLDER / name
-    if (folder / grpo_records.METRICS_FILE).exists():
+    files = (NOTE_NAME, grpo_records.ROLLOUTS_FILE, grpo_records.METRICS_FILE)
+    # Any of them: a run that died in its first step leaves rollouts, no metrics.
+    if any((folder / file).exists() for file in files):
         raise SystemExit(
             f"{SCRIPT}: {short_path(folder)} already holds a run: --run <name> "
             "for another, or move it away"
@@ -872,7 +907,7 @@ def setup_lines(
     """
     rollouts = config.tasks_per_step * config.group_size
     bonus = (
-        "the article's call bonus (up to 0.1, none at 8 calls)"
+        f"the article's call bonus (up to 0.1, none at {MAX_CALLS} calls)"
         if config.call_bonus
         else f"the token bonus (up to 0.1, none at {TOKEN_BUDGET:,} tokens)"
     )
@@ -890,10 +925,10 @@ def setup_lines(
         f"  steps     {config.steps}, each {config.tasks_per_step} training tasks x "
         f"{config.group_size} rollouts = {rollouts}, harnesses alternating "
         f"({', '.join(config.harnesses)}), task order seed {config.seed}",
-        "  rollouts  temperature 1 through the proxy, at most 8 calls, "
-        f"{CONCURRENCY} at a time",
+        f"  rollouts  temperature 1 through the proxy, at most {MAX_CALLS} calls, "
+        f"{config.concurrency} at a time",
         f"  reward    1 + {bonus} when right, else 0",
-        f"  update    clipped loss (0.8 to 1.2) on the engine's recorded log-"
+        f"  update    clipped loss ({CLIP_RANGE}) on the engine's recorded log-"
         f"probabilities · AdamW lr {config.learning_rate:g}, bias correction "
         f"{correction} · rows over {config.max_tokens:,} tokens skipped · each "
         "shared prefix trained once",
@@ -938,7 +973,7 @@ def make_hooks(
         Raises:
             RunStopped: If a rollout produced no record.
         """
-        records, failed = run_step(jobs, setup, CONCURRENCY)
+        records, failed = run_step(jobs, setup, config.concurrency)
         if failed:
             raise RunStopped(
                 f"{len(failed)} of {len(jobs)} rollouts made no record: a step with "
@@ -1036,9 +1071,8 @@ def main() -> None:
     note = {**asdict(config), "init": start, "model": which}
     (out_dir / NOTE_NAME).write_text(json.dumps(note, indent=2) + "\n", "utf-8")
     hooks = make_hooks(config, client, args.proxy_url, engine_url, out_dir.name)
-    print(f"  the engine samples with {hooks.use_adapter(init)}")
-    sys.stdout.flush()
     try:
+        print(f"  the engine samples with {hooks.use_adapter(init)}", flush=True)
         with attention(chunked=True), layer_checkpointing(model, on=True):
             outcome = train(config, model, plan, hooks, out_dir, init, print)
     except RunStopped as error:

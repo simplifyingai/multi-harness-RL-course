@@ -35,9 +35,12 @@ from noise import PROJECT_DIR, Checkpoint, project_checkpoint, read_or_fail, sho
 from stats import standard_error
 
 SCRIPT = "replay.py"
-HERE = Path(__file__).resolve().parent
-LOGS_DIR = grpo_records.LOGS_DIR  # the project's printed outputs and summaries
 PERCENT = 100
+TOKENS_COLUMN = 3  # mhrl.cli steps prints: step, correct, calls, tokens/call, seconds
+# Attempt 2 records both n_sampled and the rows; the tests check that counting
+# the rows gives n_sampled on every one of its rollouts.
+CHECKED_ROLLOUTS = 48
+CAP = f"{grpo_records.REPLY_CAP:,}"  # "1,024"
 RULE = "━━"
 SFT = "sft"
 
@@ -48,24 +51,30 @@ class Attempt:
 
     Attributes:
         name: ``attempt1`` or ``attempt2``.
+        title: The same in words: ``attempt 1``.
         folder: Its folder in the project's ``runs/main``.
         steps_log: The log of ``mhrl.cli steps`` on it, in ``runs/logs``.
         summary: The summary of the adapter the project evaluated.
         eval_label: Its evaluation records, ``eval_<label>.jsonl``.
         settings: How it trained, in words.
+        pi_before_fix: Whether its adapter was evaluated only before chapter
+            19's sandbox fix (its Pi cells measured the sandbox, not the model).
     """
 
     name: str
+    title: str
     folder: str
     steps_log: str
     summary: str
     eval_label: str
     settings: tuple[str, ...]
+    pi_before_fix: bool = False
 
 
 ATTEMPTS = {
     "attempt1": Attempt(
         "attempt1",
+        "attempt 1",
         "grpo_attempt1",
         "take3_steps",
         "summary_rl_attempt1",
@@ -76,9 +85,11 @@ ATTEMPTS = {
             "no length guard",
             "bfloat16 log-probabilities in the engine (chapter 15)",
         ),
+        pi_before_fix=True,
     ),
     "attempt2": Attempt(
         "attempt2",
+        "attempt 2",
         "grpo",
         "take4_steps",
         "summary_rl",
@@ -123,8 +134,8 @@ def sources_for(attempt: Attempt, records: Path | None) -> Sources:
     if records is None:
         return Sources(
             grpo_records.BUNDLE_DIR / attempt.name,
-            LOGS_DIR,
-            LOGS_DIR,
+            grpo_records.LOGS_DIR,
+            grpo_records.LOGS_DIR,
             f"data/project_grpo/{attempt.name} (the project's runs/main/"
             f"{attempt.folder}, slimmed)",
         )
@@ -155,7 +166,9 @@ def printed_series(logs: Path, name: str) -> list[int]:
         if path.is_file():
             lines = path.read_text("utf-8").splitlines()[1:]
             try:
-                return [int(line.split()[3]) for line in lines if line.strip()]
+                return [
+                    int(line.split()[TOKENS_COLUMN]) for line in lines if line.strip()
+                ]
             except (IndexError, ValueError) as error:
                 raise grpo_records.RecordsError(f"{path}: not steps output") from error
     raise grpo_records.RecordsError(f"no {name}.txt or {name}.log in {logs}")
@@ -189,7 +202,7 @@ def step_table(
     lines = [
         "  step  correct  reward  calls  tokens/call    replies at  no-signal   ratio"
         "     peak",
-        "                                median  mean  the 1,024 cap     groups",
+        f"                                median  mean  the {CAP} cap     groups",
     ]
     for step, metric in zip(steps, metrics, strict=True):
         length = grpo_records.step_length(step)
@@ -201,26 +214,41 @@ def step_table(
             f"{metric['mean_reward']:>6.2f}  {metric['mean_calls']:>5.1f}  "
             f"{length.median:>6.0f} {length.mean:>5.0f}  "
             f"{capped:>4} of {len(replies):<4}"
-            f"  {flat:>9}  {metric['importance_ratio_mean']:>6.3f}  "
+            f"  {flat:>9}  {ratio_text(metric['importance_ratio_mean'])}  "
             f"{metric['peak_gb']:.2f} GB"
         )
     return lines
 
 
-def legend(dedupe_note: bool) -> list[str]:
+def ratio_text(ratio: float | None) -> str:
+    """A step's mean importance ratio, or ``n/a`` for a step without an update.
+
+    Args:
+        ratio: The ratio, or None.
+
+    Returns:
+        Six characters wide.
+    """
+    return f"{ratio:>6.3f}" if ratio is not None else f"{'n/a':>6}"
+
+
+def legend(dedupe_note: bool, per_step: int) -> list[str]:
     """What the table's columns mean, each number defined once.
 
     Args:
         dedupe_note: Whether the run's records predate ``n_sampled``.
+        per_step: Rollouts per step.
 
     Returns:
         The lines.
     """
     lines = [
-        "  correct      the share of the step's 8 rollouts whose answer was right",
+        f"  correct      the share of the step's {per_step} rollouts whose answer was "
+        "right",
         "  tokens/call  a rollout's sampled tokens / its model calls; the median and "
         "the mean",
-        "               over the step's 8 rollouts. The length guard reads the median.",
+        f"               over the step's {per_step} rollouts. The length guard reads "
+        "the median.",
     ]
     if dedupe_note:
         lines += [
@@ -228,11 +256,11 @@ def legend(dedupe_note: bool) -> list[str]:
             "tokens are",
             "               counted from its captured rows, each shared prefix once "
             "(on attempt 2,",
-            "               which has both, the count equals n_sampled for all 48 "
-            "rollouts).",
+            "               which has both, the count equals n_sampled for all "
+            f"{CHECKED_ROLLOUTS} rollouts).",
         ]
     lines += [
-        "  replies      the model's replies that reached the 1,024-token cap, of "
+        f"  replies      the model's replies that reached the {CAP}-token cap, of "
         "all its replies",
         "  ratio        the trainer's mean importance ratio over the tokens it "
         "trained on; peak:",
@@ -257,8 +285,9 @@ def printed_lines(
     """
     ours = [round(grpo_records.steps_printed(step)) for step in steps]
     same = "the same numbers" if ours == printed else f"NOT the log's: {ours}"
-    means = [grpo_records.step_length(step).mean for step in steps]
-    medians = [grpo_records.step_length(step).median for step in steps]
+    lengths = [grpo_records.step_length(step) for step in steps]
+    means = [length.mean for length in lengths]
+    medians = [length.median for length in lengths]
     first_only = any(rollout.n_sampled is None for step in steps for rollout in step)
     lines = [
         f"  what the project's `python -m mhrl.cli steps` printed (runs/logs/{log}"
@@ -369,7 +398,7 @@ def compare_with_sft(attempt: Attempt, kept: str, say: Callable[[str], None]) ->
         say: Where lines go.
     """
     sft = project_checkpoint(SFT)
-    if attempt.name == "attempt1":
+    if attempt.pi_before_fix:
         # Evaluated once, before chapter 19's sandbox fix, and never again:
         # its Pi cells measured the sandbox, not the model.
         records: tuple[Record, ...] = tuple(
@@ -395,13 +424,19 @@ def show(attempt: Attempt, sources: Sources, say: Callable[[str], None]) -> None
     rollouts = grpo_records.read_rollouts(sources.run)
     metrics = grpo_records.read_metrics(sources.run)
     steps = grpo_records.by_step(rollouts)
+    if len(steps) != len(metrics):
+        raise grpo_records.RecordsError(
+            f"{sources.words}: {len(steps)} steps of rollouts, {len(metrics)} of "
+            "metrics (a run the guard stopped has one more step of rollouts)"
+        )
     old = any(rollout.n_sampled is None for rollout in rollouts)
     per_step = len(steps[0])
     say(f"{SCRIPT} {attempt.name} · the project's GRPO run, from its recorded files")
     say(f"  records   {sources.words}")
     say(
         f"            {len(steps)} steps x {per_step} rollouts = {len(rollouts)} "
-        "rollouts, each step 2 tasks x 4"
+        f"rollouts, each step {grpo_records.TASKS_PER_STEP} tasks x "
+        f"{grpo_records.GROUP_SIZE}"
     )
     say(f"  settings  {attempt.settings[0]}")
     for setting in attempt.settings[1:]:
@@ -409,7 +444,7 @@ def show(attempt: Attempt, sources: Sources, say: Callable[[str], None]) -> None
     say("")
     for line in step_table(steps, metrics):
         say(line)
-    for line in legend(old):
+    for line in legend(old, per_step):
         say(line)
     for line in cap_lines(steps):
         say(line)
@@ -425,9 +460,11 @@ def show(attempt: Attempt, sources: Sources, say: Callable[[str], None]) -> None
     for line in exposure_lines(steps):
         say(line)
     ratios = [m["importance_ratio_mean"] for m in metrics]
+    ratios = [ratio for ratio in ratios if ratio is not None]  # None: no update
     peak = max(metrics, key=lambda m: m["peak_gb"])
+    span = f"{min(ratios):.3f} to {max(ratios):.3f}" if ratios else "n/a"
     say(
-        f"  ratio {min(ratios):.3f} to {max(ratios):.3f} over the {len(steps)} steps; "
+        f"  ratio {span} over the {len(steps)} steps; "
         f"trainer peak {peak['peak_gb']:.2f} GB (step {peak['step']})"
     )
     if attempt.name == "attempt2":
@@ -445,15 +482,18 @@ def show(attempt: Attempt, sources: Sources, say: Callable[[str], None]) -> None
     say("")
     say(f"{RULE} the adapter the project kept and evaluated: {Path(kept).name}")
     say(f"  ({attempt.summary}.json names {kept})")
-    if attempt.name == "attempt1":
+    kept_in = Path(kept).parent.name  # "" when the summary names a bare file
+    if kept_in and kept_in != attempt.folder:
         say(
-            "  that folder was attempt 1's, before it was renamed grpo_attempt1. "
-            "adapter_step004"
+            f"  that folder was {attempt.title}'s, before it was renamed "
+            f"{attempt.folder}. {Path(kept).stem}"
         )
+        sampler = grpo_records.adapter_step(kept) + 1
         say(
-            "  is the adapter step 5's rollouts were sampled with. pi is left out "
-            "below: this"
+            f"  is the adapter step {sampler}'s rollouts were sampled with. pi is "
+            "left out below: this"
         )
+    if attempt.pi_before_fix:
         say(
             "  adapter was evaluated once, before chapter 19's sandbox fix, and "
             "never again."

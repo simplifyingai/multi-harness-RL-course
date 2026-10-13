@@ -29,6 +29,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import traceback
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
@@ -46,7 +47,8 @@ from wire import Options, RunFolders, Wiring, wire
 
 TRAIN_HARNESSES = (MINI, CLAUDE)  # the project's TRAIN_HARNESSES; Pi is held out
 CONCURRENCY = 4  # the project's settings.concurrency
-GRPO_FOLDER = "grpo"  # COURSE_HOME/26-grpo-in-harnesses/runs/grpo/<run>/...
+# Each rollout's evidence: COURSE_HOME/26-grpo-in-harnesses/runs/grpo/<run>/...
+EVIDENCE_FOLDER = "grpo"
 ENGINE_LABEL = "model"  # the project's engine_label for the policy's rollouts
 TASK_SEED = 0  # the project's train_grpo shuffles the tasks once with seed 0
 HARNESS_COLUMN = 14
@@ -175,7 +177,8 @@ def rollout_folder(run: str, job: Job) -> Path:
     """
     name = f"{job.task.task_id}-{job.index}"
     step = f"step_{job.step:03d}"
-    return chapter_home() / RUNS_FOLDER / GRPO_FOLDER / run / step / job.harness / name
+    runs = chapter_home() / RUNS_FOLDER / EVIDENCE_FOLDER
+    return runs / run / step / job.harness / name
 
 
 def prepare_rollout(folder: Path, harness: str, task: Task) -> RunFolders:
@@ -281,10 +284,19 @@ def rollout_in(folders: RunFolders, job: Job, setup: RolloutSetup) -> RolloutRec
         process = run_boxed(wiring, folders, setup.options.timeout_s)
         verdict = grade(job.task, folders.task)
         document = setup.client.rollout(session.session_id)
-    finally:
-        setup.client.close(session.session_id)  # on every way out
+    finally:  # on every way out; a failure here must not hide the one above
+        try:
+            setup.client.close(session.session_id)
+        except ProxyError as error:
+            print(
+                f"  session {session.session_id} not closed: {error}", file=sys.stderr
+            )
         if wiring is not None:
-            log = keep_log(own_log(wiring, folders), folders)
+            try:
+                log = keep_log(own_log(wiring, folders), folders)
+            except OSError as error:  # the log stays where the harness wrote it
+                log = own_log(wiring, folders)
+                print(f"  log not copied: {tilde(str(error))}", file=sys.stderr)
     facts = read_facts(job.harness, document, log, process)
     turns = [t for t in document.get("turns") or [] if not t.get("discarded")]
     n_sampled = sum(int(t.get("n_sampled") or 0) for t in turns)
@@ -401,6 +413,10 @@ def run_step(
         except (OSError, HarnessInstallError) as error:
             fail(job, tilde(str(error)))
             return
+        except (KeyError, ValueError) as error:  # a bug, or a record not as expected
+            traceback.print_exc(file=sys.stderr)  # the whole story, for the bug hunt
+            fail(job, f"rollout failed: {error!r}")
+            return
         with lock:
             made[position] = record
             say(rollout_line(len(made), len(jobs), record))
@@ -444,7 +460,12 @@ def plan_groups(
 
     Returns:
         One list of ``(task, harness)`` per step.
+
+    Raises:
+        ValueError: If there is no task or no harness to take.
     """
+    if not tasks or not harnesses:
+        raise ValueError("plan_groups needs at least one task and one harness")
     order = list(tasks)
     random.Random(seed).shuffle(order)
     plan, cursor = [], 0
