@@ -328,6 +328,45 @@ def test_train_sft_learns_from_the_captured_rows_and_saves_the_adapter(
     ) in out
 
 
+def test_without_bias_correction_it_trains_into_its_own_folder(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any, tmp_path: Path, course_home: Path
+) -> None:
+    use_tiny_trainer(monkeypatch, tmp_path)
+    argv = ["train_sft.py", "--demos", str(CAPTURED), "--no-bias-correction"]
+    out = run_main(train_sft, argv, monkeypatch, capsys)
+    assert "AdamW, bias correction off" in out
+    home = course_home / "25-sft-in-harnesses"
+    assert not (home / "sft").exists()  # the default adapter is never replaced
+    note = json.loads((home / "sft-no-bias-correction" / "adapter.json").read_text())
+    assert note["bias_correction"] is False
+
+
+def test_without_bias_correction_the_first_steps_are_larger() -> None:
+    rows = [
+        training.item_from_sequence(r["sequences"][0])
+        for r in map(json.loads, CAPTURED.read_text().splitlines())
+    ]
+
+    def moved(bias_correction: bool) -> float:
+        model = adapted(LFM_VOCAB)
+        before = {k: v for k, v in lora.adapter_weights(model).items()}
+        training.train_sft(
+            model,
+            [r for r in rows if r],
+            1,
+            1e-3,
+            2,
+            lambda step: None,
+            bias_correction=bias_correction,
+        )
+        after = lora.adapter_weights(model)
+        return max(mx.max(mx.abs(after[k] - before[k])).item() for k in before)
+
+    # One step: corrected Adam moves each weight by about lr; uncorrected by
+    # (1 - 0.9) / sqrt(1 - 0.999) = 3.16 x lr.
+    assert moved(False) == pytest.approx(3.16 * moved(True), rel=0.05)
+
+
 def test_train_sft_skips_a_row_over_the_cap_and_says_so(
     monkeypatch: pytest.MonkeyPatch, capsys: Any, tmp_path: Path
 ) -> None:

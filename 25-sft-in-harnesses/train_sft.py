@@ -28,6 +28,9 @@ Run ``uv run train_sft.py`` after ``collect.py``. ``--lr``, ``--epochs`` and
 demonstrations (the project's own ``demos.jsonl`` has the same format), and
 ``--fast`` uses Liquid's export of the model. The adapter and the per-step
 metrics go to ``COURSE_HOME/25-sft-in-harnesses/sft/``.
+``--no-bias-correction`` trains as the project's recorded run did, before
+the code review that turned AdamW's bias correction on, into
+``sft-no-bias-correction/``.
 """
 
 from __future__ import annotations
@@ -76,6 +79,7 @@ from training import (
 SCRIPT = "train_sft.py"
 DEMOS_FILE = Path("demos") / "demos.jsonl"  # collect.py's file
 SFT_FOLDER = "sft"
+UNCORRECTED_FOLDER = "sft-no-bias-correction"  # never replaces the adapter above
 ADAPTER_FILE = "adapter.safetensors"
 METRICS_FILE = "metrics.jsonl"
 NOTE_FILE = "adapter.json"  # which build, rows and settings made the adapter
@@ -94,13 +98,16 @@ def demos_path() -> Path:
     return chapter_home() / DEMOS_FILE
 
 
-def sft_folder() -> Path:
+def sft_folder(bias_correction: bool = True) -> Path:
     """Where the adapter and its metrics go.
 
+    Args:
+        bias_correction: False for ``--no-bias-correction``'s own folder.
+
     Returns:
-        ``COURSE_HOME/25-sft-in-harnesses/sft``.
+        ``COURSE_HOME/25-sft-in-harnesses/sft`` (or ``sft-no-bias-correction``).
     """
-    return chapter_home() / SFT_FOLDER
+    return chapter_home() / (SFT_FOLDER if bias_correction else UNCORRECTED_FOLDER)
 
 
 def read_demos(path: Path) -> list[dict[str, Any]]:
@@ -207,10 +214,11 @@ def print_setup(
     for line in rows_by_harness(records, args.max_tokens):
         print(line)
     epochs = f"{args.epochs} epoch{'' if args.epochs == 1 else 's'}"
+    correction = "off" if args.no_bias_correction else "on"
     print(
         f"  training  lr {args.lr:g} · batch {args.batch} · {epochs} = {steps} "
-        f"steps · AdamW, bias correction on · LoRA rank {LORA_RANK}, scale "
-        f"{LORA_SCALE:g}, last {LORA_LAYERS} layers"
+        f"steps · AdamW, bias correction {correction} · LoRA rank {LORA_RANK}, "
+        f"scale {LORA_SCALE:g}, last {LORA_LAYERS} layers"
     )
     print(
         f"  memory    limit {MEMORY_LIMIT_BYTES / GIB:.0f} GiB, cache "
@@ -276,6 +284,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch", type=int, default=SFT_BATCH)
     parser.add_argument("--max-tokens", type=int, default=MAX_TRAIN_TOKENS)
     parser.add_argument("--fast", action="store_true", help="Liquid's export")
+    parser.add_argument(
+        "--no-bias-correction",
+        action="store_true",
+        help="AdamW as the project's recorded run trained (into its own folder)",
+    )
     args = parser.parse_args()
     if args.epochs < 1 or args.batch < 1 or args.max_tokens < 2:
         parser.error("--epochs and --batch must be at least 1, --max-tokens 2")
@@ -318,7 +331,7 @@ def main() -> None:
     set_memory_limits()
     model = load_model(folder)
     apply_lora(model, LORA_RANK, LORA_SCALE, LORA_LAYERS)
-    out = sft_folder()
+    out = sft_folder(not args.no_bias_correction)
     out.mkdir(parents=True, exist_ok=True)
     # An older adapter must never sit beside this run's metrics: if this run
     # stops early, there is no adapter rather than the wrong one.
@@ -347,7 +360,15 @@ def main() -> None:
             handle.write(json.dumps(line) + "\n")
 
     with attention(chunked=True), layer_checkpointing(model, on=True):
-        train_sft(model, rows.items, args.epochs, args.lr, args.batch, on_step)
+        train_sft(
+            model,
+            rows.items,
+            args.epochs,
+            args.lr,
+            args.batch,
+            on_step,
+            bias_correction=not args.no_bias_correction,
+        )
     adapter = save_adapter(model, out / ADAPTER_FILE)
     note = {
         "model": short_path(folder),
@@ -358,6 +379,7 @@ def main() -> None:
         "lr": args.lr,
         "epochs": args.epochs,
         "batch": args.batch,
+        "bias_correction": not args.no_bias_correction,
     }
     (out / NOTE_FILE).write_text(json.dumps(note, indent=2) + "\n", encoding="utf-8")
     print(

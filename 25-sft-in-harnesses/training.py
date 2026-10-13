@@ -380,6 +380,7 @@ def train_sft(
     learning_rate: float,
     batch_size: int,
     on_step: Callable[[Step], None],
+    bias_correction: bool = True,
 ) -> None:
     """Fine-tune the LoRA adapter on rows (the project's loop).
 
@@ -390,9 +391,15 @@ def train_sft(
         learning_rate: AdamW learning rate.
         batch_size: Rows per optimizer step.
         on_step: Called after every step with what it did.
+        bias_correction: AdamW's bias correction, on in the project's code
+            today. Its recorded SFT run trained before the code review that
+            turned it on: without it, the first steps are several times
+            larger (``train_sft.py --no-bias-correction``).
     """
     # As mhrl/training/sft.py builds it: weight decay is left at MLX's 0.01.
-    optimizer = optim.AdamW(learning_rate=learning_rate, bias_correction=True)
+    optimizer = optim.AdamW(
+        learning_rate=learning_rate, bias_correction=bias_correction
+    )
 
     def loss_fn(item: TrainItem) -> mx.array:
         """Minus the sum of the row's trained-token log-probabilities.

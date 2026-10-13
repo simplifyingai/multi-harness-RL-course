@@ -716,6 +716,27 @@ def test_collect_refuses_an_unknown_or_held_out_harness(
     assert args.concurrency == 4
 
 
+def test_the_file_ends_in_job_order_whatever_order_rollouts_ended(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "demos.jsonl"
+    base = collect.DemoRecord(**captured()[0])
+    ended = [
+        ("claude-code", "b"),
+        ("mini-swe-agent", "z"),
+        ("mini-swe-agent", "b"),
+        ("claude-code", "a"),
+        ("mini-swe-agent", "a"),
+    ]
+    for harness, task in ended:
+        collect.append_record(path, replace(base, harness=harness, task_id=task))
+    order = [(h, t) for t in ("a", "b") for h in ("mini-swe-agent", "claude-code")]
+    collect.put_in_order(path, order)
+    found = [(r.harness, r.task_id) for r in collect.read_demos(path)]
+    assert found == [*order, ("mini-swe-agent", "z")]  # the rest follows
+    assert not path.with_suffix(".tmp").exists()
+
+
 def test_a_failed_rollout_is_said_and_a_dead_proxy_stops_the_rest(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

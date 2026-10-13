@@ -27,7 +27,10 @@ the student. Each (task, harness) pair is one rollout:
 Four rollouts run at a time (the project's ``concurrency``), each with its
 own folders and session, all sharing the teacher's one engine thread. Each
 record is appended to ``COURSE_HOME/25-sft-in-harnesses/demos/demos.jsonl``
-the moment its rollout ends. Then the script prints how many demonstrations
+the moment its rollout ends, and at the end the file is put in job order
+(each task, then each harness, the project's order), so the trainer's batches
+never depend on which rollout ended first. Then the script prints how many
+demonstrations
 are usable (correct and trainable) and one captured Claude Code row, segment
 by segment, with its mask.
 
@@ -522,6 +525,36 @@ def collect(
     return made, failed
 
 
+def put_in_order(path: Path, order: list[tuple[str, str]]) -> None:
+    """Rewrite the demonstrations file in job order, the project's order.
+
+    Records are appended as rollouts END, four at a time, so the file's order
+    depends on which harness was quicker. The trainer shuffles rows with a
+    fixed seed, and the batches that shuffle makes depend on the order it
+    starts from: left as they ended, two identical collections would train
+    two different adapters. In job order (each task, then each harness, as
+    the project's ``collect_demonstrations`` writes them) the file is the
+    same on every run. The new file replaces the old one whole, at once.
+
+    Args:
+        path: The demonstrations file.
+        order: ``(harness, task_id)`` pairs in job order; any record not in
+            it (an earlier run's other tasks) follows, in its own order.
+    """
+    lines = [line for line in path.read_text("utf-8").splitlines() if line.strip()]
+    rank = {pair: index for index, pair in enumerate(order)}
+
+    def position(line: str) -> int:
+        """Where a record goes: its job's place, or after every job."""
+        record = json.loads(line)
+        return rank.get((record["harness"], record["task_id"]), len(rank))
+
+    lines.sort(key=position)  # a stable sort keeps the rest in file order
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text("".join(line + "\n" for line in lines), "utf-8")
+    os.replace(temporary, path)
+
+
 def segments(row: dict[str, Any]) -> list[Segment]:
     """Cut a row into runs of equal mask: the harness's text, the teacher's tokens.
 
@@ -822,7 +855,9 @@ def main() -> None:
     print(heading or "demonstrations")
     _, failed = collect(jobs, setup, out_file, args.concurrency)
     # Read back from the file: a resumed run's earlier records count too.
-    wanted = {(h, t.task_id) for t in tasks for h in args.harnesses}
+    order = [(h, t.task_id) for t in tasks for h in args.harnesses]
+    put_in_order(out_file, order)
+    wanted = set(order)
     records = [r for r in read_demos(out_file) if (r.harness, r.task_id) in wanted]
     good = sum(1 for r in records if r.usable)
     print("")
