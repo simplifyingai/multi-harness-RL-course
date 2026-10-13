@@ -264,9 +264,10 @@ def describe(report: NetworkReport, proxy: str) -> str:
     Returns:
         The line.
     """
+    # Chapter 29: a sample sees open sockets only, never a refused connect.
     head = (
-        f"lsof every {INTERVAL_S} s: {report.samples} samples over "
-        f"{report.seconds:.1f} s"
+        f"lsof every {INTERVAL_S} s (sampled; a refused connect is invisible to "
+        f"lsof): {report.samples} samples over {report.seconds:.1f} s"
     )
     if report.failed or not report.samples:
         outside = f"; seen off this machine: {', '.join(report.outside)}"

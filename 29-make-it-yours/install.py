@@ -61,6 +61,7 @@ from typing import Any
 
 from lfm_files import chapter_home, short_path, tilde
 from sandbox import SandboxError, sandbox_command, sandbox_params
+from tasks import gold_folder
 
 HERE = Path(__file__).resolve().parent
 MINI = "mini-swe-agent"
@@ -314,7 +315,9 @@ def probe_version(
             cannot run.
     """
     try:
-        params = sandbox_params(workdir=workdir, state_dir=state)
+        params = sandbox_params(
+            workdir=workdir, state_dir=state, tasks_dir=gold_folder()
+        )
         argv = sandbox_command(version_command(name), params=params)
     except SandboxError as error:
         raise HarnessInstallError(f"no sandbox, so no run: {error}") from error

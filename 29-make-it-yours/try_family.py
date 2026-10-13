@@ -67,11 +67,11 @@ from lfm_files import MAX_CALLS, OUTPUT_CAP, chapter_home, short_path, tilde
 from make_csv_tasks import ensure_tasks
 from power import DEFAULT_GAIN, DEFAULT_POWER, check_question, one_line, share_argument
 from run_one import PROXY_URL, RUNS_FOLDER, chosen_script, detect_engine, prepare_run
+from sandbox import FAMILY_FOLDER
 from stats import compare, exact_p, pass_at_1, wilson_interval
 from tasks import DEFAULT_SEED, DIFFICULTIES, Task, task_instruction, tasks_path
 from wire import ROLLOUT_TIMEOUT_S, Options, wire
 
-FAMILY_FOLDER = "family"
 RECORDS_NAME = "{harness}.jsonl"
 SUMMARY_NAME = "{harness}.summary.json"
 MODEL_LABEL = "base"  # the untrained model: the first checkpoint
@@ -311,6 +311,8 @@ def score_lines(records: list[Record], tasks: list[Task], gain: float) -> list[s
     """
     solved = sum(r.correct for r in records)
     cells = len(records)
+    if not cells:
+        return ["score     none recorded"]
     low, high = wilson_interval(solved, cells)
     calls = [r.n_calls for r in records if r.correct]
     per_solve = f"{sum(calls) / len(calls):.1f}" if calls else "none solved"
@@ -467,12 +469,19 @@ def report(
         This run's records and the summary.
     """
     wanted = {t.task_id for t in tasks}
-    records = [r for r in read_records(out_file) if r.task_id in wanted]
+    every = read_records(out_file)
+    records = [r for r in every if r.task_id in wanted]
     summary = summarize(records, [harness])
     summary["label"] = label
     path = out_file.with_name(SUMMARY_NAME.format(harness=harness))
     path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print("")
+    others = len(every) - len(records)
+    if others:
+        print(
+            f"OTHERS    {others} more in the file for tasks outside this run: left "
+            "out of the score"
+        )
     if len(records) < len(tasks):
         print(
             f"PARTIAL   {len(records)} of {len(tasks)} tasks recorded: the score "
@@ -543,12 +552,18 @@ def main() -> None:
         print("")
         for line in against_lines(args.against, records, args.harness):
             print(line)
-    outside = [r for r in records if r.loopback_only is False]
+    # Not True: also a record whose watch never said (None) is not counted clean.
+    outside = [r for r in records if r.loopback_only is not True]
     if outside:
         names = ", ".join(r.task_id for r in outside)
-        print(f"network   NOT loopback-only (or a sample was lost) in: {names}")
+        print(f"network   NOT shown loopback-only (or a sample was lost) in: {names}")
         sys.exit(1)
-    print("network   every rollout: lsof saw only this machine's addresses")
+    which = (
+        "every rollout"
+        if len(records) == len(tasks)
+        else f"{len(records)} of {len(tasks)} recorded rollouts"
+    )
+    print(f"network   {which}: lsof saw only this machine's addresses (sampled)")
 
 
 if __name__ == "__main__":

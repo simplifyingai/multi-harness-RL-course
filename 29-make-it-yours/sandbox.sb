@@ -3,8 +3,10 @@
 ;; The box for one rollout (macOS sandbox-exec / Seatbelt).
 ;;
 ;; This is the multi-harness-rl project's profile (configs/harnesses/sandbox.sb),
-;; with its rules unchanged, copied from chapter 19; only the folders it is
-;; given differ (this chapter keeps everything under COURSE_HOME/29-make-it-yours).
+;; copied from chapter 19, with two rules added by chapter 29 (marked below):
+;; other rollouts' folders, the family's records and this repository cannot be
+;; read, and loopback is open only on the proxy's port (and one more, for a
+;; probe). This chapter keeps everything under COURSE_HOME/29-make-it-yours.
 ;; Claude Code runs bash for the model on your laptop, so every run is in this box.
 ;; Everything is allowed EXCEPT:
 ;;
@@ -12,8 +14,10 @@
 ;;   * reading credentials (ssh/cloud/gh keys, .netrc, Claude Code's login,
 ;;     any .env file under your home outside the task folder),
 ;;   * reading the task files that hold the gold answers,
+;;   * reading the contents of files in other rollouts' folders, in the
+;;     family's records, or in this repository (chapter 29),
 ;;   * asking the keychain for anything, and
-;;   * outbound network to anything but the loopback interface.
+;;   * outbound network to anything but the proxy's loopback port.
 ;;
 ;; Parameters (sandbox.py passes each with -D NAME=VALUE). Paths must be REAL
 ;; paths: /tmp and /var are links into /private on macOS, and Seatbelt matches
@@ -26,6 +30,11 @@
 ;;   CLAUDE_JSON_REGEX   matches HOME_DIR/.claude.json (and its backups)
 ;;   CLAUDE_CREDS_REGEX  matches HOME_DIR/.claude/.credentials*
 ;;   TASKS_DIR           the folder holding the task records (gold answers)
+;;   RUNS_DIR            the folder holding every rollout's folder (chapter 29)
+;;   FAMILY_DIR          the folder holding the family's run records (chapter 29)
+;;   REPO_DIR            this repository: its code can rebuild the gold (chapter 29)
+;;   PROXY_PORT          the one loopback port the command may connect to
+;;   EXTRA_PORT          a second one (a probe's catcher); PROXY_PORT otherwise
 ;;   SYSTEM_TMP          optional; "1" also makes the shared system temp dirs
 ;;                       writable. Off by default: rollouts run side by side,
 ;;                       and a model that writes to a guessed absolute /tmp
@@ -88,6 +97,26 @@
 (deny file-read*
     (subpath (param "TASKS_DIR")))
 
+;; Chapter 29: what the box can see without opening TASKS_DIR. Chapter 24's
+;; scripted "solve" runs write `echo <gold> > answer.txt` into their records,
+;; every record names the expected answer of a wrong cell, and the generator
+;; in this repository makes the same tasks from the seed in a task's id. Only
+;; the CONTENTS of regular files are denied: never metadata, and never a
+;; folder's listing, so stat, getcwd and the path resolution through the task
+;; folder's parents still work. Denying folders too broke bash's getcwd
+;; (measured), as the first version's whole-folder deny broke tools.
+;; The rollout's own folders are left out of the rule itself: an allow
+;; after it did not win over this deny (measured).
+(deny file-read-data
+    (require-all
+        (vnode-type REGULAR-FILE)
+        (require-any
+            (subpath (param "RUNS_DIR"))
+            (subpath (param "FAMILY_DIR"))
+            (subpath (param "REPO_DIR")))
+        (require-not (subpath (param "WORKDIR")))
+        (require-not (subpath (param "STATE_DIR")))))
+
 ;; ...but the rollout's own folders stay fully readable, .env files included.
 (allow file-read*
     (subpath (param "WORKDIR"))
@@ -101,6 +130,10 @@
 ;; ---------------------------------------------------------------- network
 ;; Outbound only to loopback, where the course's local servers listen. DNS
 ;; (mDNSResponder's unix socket) is outbound too, so external names do not
-;; even resolve, and a connect() to an external address fails.
+;; even resolve, and a connect() to an external address fails. Chapter 29:
+;; only the proxy's port, so a command cannot reach the engine directly
+;; (around the proxy and its budget) or the scripted engine's /script.
 (deny network-outbound)
-(allow network-outbound (remote ip "localhost:*"))
+(allow network-outbound
+    (remote ip (string-append "localhost:" (param "PROXY_PORT")))
+    (remote ip (string-append "localhost:" (param "EXTRA_PORT"))))

@@ -5,20 +5,26 @@
 """What Qwen Code does around the model, measured before it ever meets one.
 
 Wiring a new harness is more than a base URL and a key. Before the fourth
-harness met the model, this probe measured five things about it, each run
+harness met the model, this probe measured six things about it, each run
 of Qwen Code 0.24.7 inside chapter 19's sandbox with a private ``HOME``:
 
 1. **its own switches left on**: where it tries to connect besides the
    model. ``HTTPS_PROXY`` points at a **catcher** on this machine, which
    writes down the host of every outside connection asked for and refuses
    it, so nothing leaves the machine and the box is never tested;
-2. **with wire.py's switches**: the same, with usage statistics, telemetry,
-   the early connection to the API and session titles switched off;
-3. **``--bare``** (wire.py's setup): the tools it offers, the size of its
+2. **the same, with no catcher**: only the sandbox stands in the way, and
+   its own log says how many direct connections it refused;
+3. **with wire.py's switches**: usage statistics, telemetry, the early
+   connection to the API and session titles switched off;
+4. **``--bare``** (wire.py's setup): the tools it offers, the size of its
    first request, how many requests it makes and the reply length it asks;
-4. **without ``--bare``**: the same numbers;
-5. **``read_file`` excluded too**: what its permission rules then do to a
+5. **without ``--bare``**: the same numbers;
+6. **``read_file`` excluded too**: what its permission rules then do to a
    shell command that reads a file.
+
+After every run the sandbox's refusals of that process are read from the
+system log (``log show``): the catcher sees only clients that honour
+``HTTPS_PROXY``, the log sees the rest.
 
 The model is a **stand-in** on this machine that speaks OpenAI's chat API,
 records every request and answers from a short script: look at the file,
@@ -34,6 +40,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import re
 import shutil
 import socketserver
 import subprocess
@@ -42,6 +49,7 @@ import threading
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -76,8 +84,20 @@ PROXY_VARIABLES = ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy")
 NO_PROXY = "127.0.0.1,localhost"  # the stand-in model is reached directly
 REFUSED = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
 RULE = "━━"
+# The sandbox's own log of what it refused (macOS's unified log).
+LOG_COMMAND = ("/usr/bin/log", "show", "--style", "compact", "--start")
+LOG_PREDICATE = 'sender == "Sandbox" AND eventMessage CONTAINS "network-outbound"'
+LOG_TIMEOUT_S = 60
+LOG_DELAY_S = 1.0  # the log takes a moment to hold the last refusals
+LOG_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+DENY_RE = r"Sandbox: [^(]+\({pid}\) deny\(\d+\) network-outbound"
 PROBE_KEY = "probe-key"  # the stand-in model takes any key
-SWITCH_RUNS = ("1-", "2-")  # the runs read for outside connections
+SWITCH_RUNS = ("1-", "2-", "3-")  # the runs read for outside connections
+INCOMPLETE = "run did not complete: 0 means unobserved"
+PROXY_ONLY = (
+    "(through HTTPS_PROXY only; a client that ignores it is stopped by the "
+    "sandbox and not seen here)"
+)
 HTTP_OK = 200
 
 
@@ -91,6 +111,8 @@ class Run:
         switches: Keep wire.py's switches off.
         bare: Keep ``--bare``.
         extra: A tool to exclude besides wire.py's.
+        catcher: Point ``HTTPS_PROXY`` at the catcher (False: only the
+            sandbox stands between it and the internet).
     """
 
     name: str
@@ -98,6 +120,7 @@ class Run:
     switches: bool = True
     bare: bool = True
     extra: str = ""
+    catcher: bool = True
 
     def reader(self, probe: Probe) -> list[str]:
         """The lines that describe this run's result.
@@ -127,6 +150,8 @@ class Probe:
         exit_code: Qwen Code's exit status (None when the time limit hit).
         log: Its stream-json log.
         answered: What ``answer.txt`` holds after the run, or None.
+        refused: Direct connections the sandbox refused its process, from
+            the system log (None when the log could not be read).
     """
 
     name: str
@@ -135,6 +160,7 @@ class Probe:
     exit_code: int | None = None
     log: Path = Path()
     answered: str | None = None
+    refused: int | None = None
 
 
 def reply_for(index: int) -> dict[str, Any]:
@@ -304,28 +330,35 @@ def run_once(
     catcher.asked.clear()
     try:
         params = sandbox_params(
-            workdir=folders.task, state_dir=folders.state, tasks_dir=gold_folder()
+            workdir=folders.task,
+            state_dir=folders.state,
+            tasks_dir=gold_folder(),
+            proxy_port=wiring.proxy_port,  # the stand-in model
+            extra_port=catcher.server_address[1],
         )
         argv = sandbox_command(wiring.argv, params=params)
     except SandboxError as error:
         raise HarnessInstallError(f"no sandbox, so no run: {error}") from error
     log = folders.task.parent / f"{name}.jsonl"
     exit_code: int | None
+    since = datetime.now() - timedelta(seconds=1)
     with log.open("w", encoding="utf-8") as out:
+        # sandbox-exec becomes Qwen Code, so this pid is its own process.
+        process = subprocess.Popen(
+            argv,
+            cwd=folders.task,
+            env=wiring.env,
+            stdin=subprocess.DEVNULL,
+            stdout=out,
+            stderr=subprocess.DEVNULL,
+        )
         try:
-            exit_code = subprocess.run(
-                argv,
-                cwd=folders.task,
-                env=wiring.env,
-                stdin=subprocess.DEVNULL,
-                stdout=out,
-                stderr=subprocess.DEVNULL,
-                timeout=RUN_TIMEOUT_S,
-                check=False,
-            ).returncode
+            exit_code = process.wait(timeout=RUN_TIMEOUT_S)
         except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
             exit_code = None
-    time.sleep(0.5)  # a connection asked for as it exits reaches the catcher
+    time.sleep(LOG_DELAY_S)  # late connections reach the catcher and the log
     answer = folders.task / "answer.txt"
     return Probe(
         name=name,
@@ -334,7 +367,39 @@ def run_once(
         exit_code=exit_code,
         log=log,
         answered=answer.read_text().strip() if answer.is_file() else None,
+        refused=sandbox_refusals(process.pid, since),
     )
+
+
+def sandbox_refusals(pid: int, since: datetime) -> int | None:
+    """Count the outbound connections the sandbox refused one process.
+
+    A client that ignores ``HTTPS_PROXY`` never reaches the catcher; the
+    sandbox refuses its connect, and says so in the system log.
+
+    Args:
+        pid: The process.
+        since: When its run started.
+
+    Returns:
+        How many refusals the log holds for it, or None when the log could
+        not be read.
+    """
+    command = [
+        *LOG_COMMAND,
+        since.strftime(LOG_TIME_FORMAT),
+        "--predicate",
+        LOG_PREDICATE,
+    ]
+    try:
+        found = subprocess.run(
+            command, capture_output=True, text=True, timeout=LOG_TIMEOUT_S, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if found.returncode != 0:
+        return None
+    return len(re.findall(DENY_RE.format(pid=pid), found.stdout))
 
 
 def fresh_folders(root: Path, name: str) -> RunFolders:
@@ -362,13 +427,18 @@ def fresh_folders(root: Path, name: str) -> RunFolders:
 
 
 def variant(
-    base: Wiring, proxy: str, *, switches: bool, bare: bool, also_excluded: str = ""
+    base: Wiring,
+    proxy: str | None,
+    *,
+    switches: bool,
+    bare: bool,
+    also_excluded: str = "",
 ) -> Wiring:
     """wire.py's Qwen Code wiring, changed in one way, with the catcher as its proxy.
 
     Args:
         base: wire.py's wiring.
-        proxy: The catcher's root.
+        proxy: The catcher's root, or None for no proxy at all.
         switches: Keep wire.py's switches off (False: Qwen Code's defaults).
         bare: Keep ``--bare``.
         also_excluded: A tool to add to the excluded ones.
@@ -377,12 +447,19 @@ def variant(
         The changed wiring.
     """
     env = {k: v for k, v in base.env.items() if switches or k not in QWEN_SWITCHES}
-    env |= dict.fromkeys(PROXY_VARIABLES, proxy) | {"NO_PROXY": NO_PROXY}
+    if proxy is not None:
+        env |= dict.fromkeys(PROXY_VARIABLES, proxy) | {"NO_PROXY": NO_PROXY}
     argv = [a for a in base.argv if bare or a != "--bare"]
     if also_excluded:
         where = argv.index("--exclude-tools") + 1
         argv[where] = ",".join([*QWEN_EXCLUDED, also_excluded])
-    return Wiring(base.harness, argv, env, stdout_name=base.stdout_name)
+    return Wiring(
+        base.harness,
+        argv,
+        env,
+        stdout_name=base.stdout_name,
+        proxy_port=base.proxy_port,
+    )
 
 
 def tools_of(body: dict[str, Any]) -> list[str]:
@@ -418,12 +495,31 @@ def outside_lines(probe: Probe) -> list[str]:
         probe: The run.
 
     Returns:
-        Lines.
+        Lines: a warning first when the run did not complete (a count of 0
+        then means nothing was observed, not that nothing was asked).
     """
+    lines = []
+    if probe.exit_code != 0 or not probe.requests:
+        lines.append(f"  {INCOMPLETE}")
     hosts = sorted({line.split()[1] for line in probe.outside if " " in line})
-    lines = [f"  outside connections asked for: {len(probe.outside)}"]
+    count = f"  outside connections asked for: {len(probe.outside)}"
+    lines.append(count if probe.outside else f"{count} {PROXY_ONLY}")
     lines += [f"    {host} (refused by the catcher)" for host in hosts]
     return lines
+
+
+def sandbox_line(probe: Probe) -> str:
+    """Say how many direct connections the sandbox refused the run.
+
+    Args:
+        probe: The run.
+
+    Returns:
+        One line.
+    """
+    if probe.refused is None:
+        return "  sandbox        log unreadable"
+    return f"  sandbox        refused {probe.refused} direct connections (its own log)"
 
 
 def request_lines(probe: Probe) -> list[str]:
@@ -489,7 +585,7 @@ def refusal_lines(probe: Probe) -> list[str]:
 
 
 def main() -> None:
-    """Run the five probes and print what each measured."""
+    """Run the six probes and print what each measured."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.parse_args()
     try:
@@ -513,10 +609,16 @@ def main() -> None:
         print("  every run       inside chapter 19's sandbox, a private HOME")
         runs = [
             Run("1-own-switches", "its own switches left on", switches=False),
-            Run("2-wire-switches", "with wire.py's switches"),
-            Run("3-bare", "--bare (wire.py's setup)"),
-            Run("4-not-bare", "without --bare", bare=False),
-            Run("5-read-file-excluded", "read_file excluded too", extra="read_file"),
+            Run(
+                "2-own-switches-no-catcher",
+                "its own switches left on, no HTTPS_PROXY: only the sandbox",
+                switches=False,
+                catcher=False,
+            ),
+            Run("3-wire-switches", "with wire.py's switches"),
+            Run("4-bare", "--bare (wire.py's setup)"),
+            Run("5-not-bare", "without --bare", bare=False),
+            Run("6-read-file-excluded", "read_file excluded too", extra="read_file"),
         ]
         probes = {}
         for run in runs:
@@ -525,7 +627,7 @@ def main() -> None:
             base = wire(QWEN, run_folders, INSTRUCTION, model_url, PROBE_KEY)
             wiring = variant(
                 base,
-                proxy_url,
+                proxy_url if run.catcher else None,
                 switches=run.switches,
                 bare=run.bare,
                 also_excluded=run.extra,
@@ -540,6 +642,7 @@ def main() -> None:
             print(f"  exit           {probe.exit_code}")
             for line in run.reader(probe):
                 print(line)
+            print(sandbox_line(probe))
     print("")
     print(f"logs      {tilde(str(root))}/<run>/<run>.jsonl (Qwen Code's stream-json)")
 

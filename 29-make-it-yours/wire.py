@@ -58,6 +58,7 @@ import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from install import (
     CLAUDE,
@@ -70,6 +71,7 @@ from install import (
     program,
 )
 from lfm_files import MAX_CALLS, OUTPUT_CAP, chapter_home, short_path, tilde
+from sandbox import DEFAULT_PROXY_PORT
 
 HERE = Path(__file__).resolve().parent
 MODEL_NAME = "lfm2.5-2.6b"  # the name the engine serves
@@ -210,6 +212,8 @@ class Wiring:
         settings: The lines that point it at the proxy, for printing.
         own_log: The log the harness keeps of the run.
         stdout_name: The file its standard output goes to.
+        proxy_port: The proxy's port: the one loopback port the sandbox lets
+            the run connect to.
     """
 
     harness: str
@@ -219,6 +223,7 @@ class Wiring:
     settings: list[str] = field(default_factory=list)
     own_log: Path | None = None
     stdout_name: str = ""
+    proxy_port: int = DEFAULT_PROXY_PORT
 
     def write(self) -> None:
         """Write the settings files."""
@@ -300,10 +305,12 @@ def wire_mini(
     """
     overlay = folders.state / MINI_OVERLAY
     trajectory = folders.state / MINI_TRAJECTORY
+    # A copy in the run's own folder: the box denies reading this repository.
+    config = folders.state / MINI_CONFIG.name
     settings = mini_overlay(base_url, api_key, options.timeout_s)
     argv = [
         *program(MINI),
-        "-c", str(MINI_CONFIG),
+        "-c", str(config),
         "-c", str(overlay),
         "-t", instruction,
         "--yolo",
@@ -327,7 +334,10 @@ def wire_mini(
         harness=MINI,
         argv=argv,
         env=env,
-        files={overlay: json.dumps(settings, indent=2) + "\n"},
+        files={
+            config: MINI_CONFIG.read_text(encoding="utf-8"),
+            overlay: json.dumps(settings, indent=2) + "\n",
+        },
         settings=[
             f"model.model_name             {model['model_name']}",
             f"model.model_kwargs.api_base  {model['model_kwargs']['api_base']}",
@@ -634,7 +644,9 @@ def wire(
         raise ValueError(f"unknown harness {harness!r}: choose from {HARNESSES}")
     wirer = WIRERS[harness]
     root = base_url.rstrip("/")
-    return wirer(folders, instruction, root, api_key, options or Options())
+    wiring = wirer(folders, instruction, root, api_key, options or Options())
+    wiring.proxy_port = urlsplit(root).port or DEFAULT_PROXY_PORT
+    return wiring
 
 
 def show(wiring: Wiring, folders: RunFolders) -> None:

@@ -7,6 +7,10 @@
 Chapter 19's ``sandbox.py`` (a copy of the project's
 ``mhrl/harnesses/sandbox.py``), pointed at this chapter's folders, with only
 the project's profile (chapter 19's first, too-strict one is left out).
+Chapter 29 adds two rules: the contents of files in other rollouts' folders,
+in the family's run records and in this repository are denied (their
+metadata is not, so paths still resolve), and loopback is open only on the
+proxy's port.
 Claude Code runs the model's shell commands on your laptop with
 ``bypassPermissions``, so it never runs unsandboxed: when the box cannot be
 applied, this module raises instead of falling back, and nothing runs.
@@ -25,13 +29,12 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from lfm_files import chapter_home, short_path
-from tasks import DATA_DIR
 
 HERE = Path(__file__).resolve().parent
 SANDBOX_EXEC = Path("/usr/bin/sandbox-exec")
 SUPPORTED_PLATFORM = "darwin"
 
-PROFILE = HERE / "sandbox.sb"  # the project's profile, rules unchanged
+PROFILE = HERE / "sandbox.sb"  # the project's profile, two rules added
 
 # Parameter names the profile reads with (param "...").
 WORKDIR_PARAM = "WORKDIR"
@@ -41,6 +44,17 @@ ENV_FILE_REGEX_PARAM = "ENV_FILE_REGEX"
 CLAUDE_JSON_REGEX_PARAM = "CLAUDE_JSON_REGEX"
 CLAUDE_CREDS_REGEX_PARAM = "CLAUDE_CREDS_REGEX"
 TASKS_DIR_PARAM = "TASKS_DIR"
+RUNS_DIR_PARAM = "RUNS_DIR"
+FAMILY_DIR_PARAM = "FAMILY_DIR"
+REPO_DIR_PARAM = "REPO_DIR"
+PROXY_PORT_PARAM = "PROXY_PORT"
+EXTRA_PORT_PARAM = "EXTRA_PORT"
+# Where the chapter keeps every rollout's folder and the family's run records
+# (run_one.py and try_family.py name their folders from these).
+RUNS_FOLDER = "runs"
+FAMILY_FOLDER = "family"
+REPO_DIR = HERE.parent  # this repository: its generator can rebuild the gold
+DEFAULT_PROXY_PORT = 8200  # the project's proxy port
 SYSTEM_TMP_PARAM = "SYSTEM_TMP"
 SYSTEM_TMP_ON = "1"
 EXAMPLE_RUN = "example"
@@ -187,13 +201,42 @@ def check_hidden_root(path: Path, writable: Sequence[Path]) -> Path:
     return resolved
 
 
+def check_contents_root(path: Path, writable: Sequence[Path]) -> Path:
+    """Resolve a folder whose file contents the box denies, metadata kept.
+
+    Unlike ``check_hidden_root``, the folder may contain the task folder
+    (``runs/`` does): only ``file-read-data`` is denied, so paths through it
+    still resolve, and the own folders are re-allowed after it. It may not
+    sit inside a writable folder, where reads are allowed again.
+
+    Args:
+        path: A folder whose file contents the profile denies.
+        writable: The resolved task folder and state folder.
+
+    Returns:
+        The resolved path.
+
+    Raises:
+        UnsafeSandboxPathError: If the folder sits inside a writable folder.
+    """
+    resolved = path.resolve()
+    for folder in writable:
+        if resolved != folder and resolved.is_relative_to(folder):
+            raise UnsafeSandboxPathError(
+                f"{resolved} is inside {folder}, where reads are allowed again"
+            )
+    return resolved
+
+
 def sandbox_params(
     *,
     workdir: Path,
     state_dir: Path,
     home: Path | None = None,
-    tasks_dir: Path = DATA_DIR,
+    tasks_dir: Path | None = None,
     system_tmp: bool = False,
+    proxy_port: int = DEFAULT_PROXY_PORT,
+    extra_port: int | None = None,
 ) -> dict[str, str]:
     """Compute every parameter the profile reads.
 
@@ -202,16 +245,24 @@ def sandbox_params(
         state_dir: The run's private HOME/TMPDIR folder it may write to.
         home: The home folder whose credentials are hidden; your real one
             unless a decoy home is being tested.
-        tasks_dir: The folder holding the gold answers.
+        tasks_dir: The folder holding the gold answers (the family's
+            ``tasks.gold_folder()`` when None).
         system_tmp: Also allow writes to the shared system temp folders.
+        proxy_port: The one loopback port the command may connect to.
+        extra_port: A second one (a probe's catcher); ``proxy_port`` if None.
 
     Returns:
         Parameter name to value.
 
     Raises:
-        UnsafeSandboxPathError: If a writable folder is too broad, or the tasks
-            folder overlaps a writable folder.
+        UnsafeSandboxPathError: If a writable folder is too broad, the tasks
+            folder overlaps a writable folder, or a folder whose contents are
+            denied sits inside one.
     """
+    if tasks_dir is None:
+        from tasks import gold_folder  # here, since tasks reads lfm_files too
+
+        tasks_dir = gold_folder()
     protected = (home or real_home()).resolve()
     escaped = regex_escape(str(protected))
     writable = [
@@ -226,6 +277,15 @@ def sandbox_params(
         CLAUDE_JSON_REGEX_PARAM: f"^{escaped}{CLAUDE_JSON_PATTERN}",
         CLAUDE_CREDS_REGEX_PARAM: f"^{escaped}{CLAUDE_CREDS_PATTERN}",
         TASKS_DIR_PARAM: str(check_hidden_root(tasks_dir, writable)),
+        RUNS_DIR_PARAM: str(
+            check_contents_root(chapter_home() / RUNS_FOLDER, writable)
+        ),
+        FAMILY_DIR_PARAM: str(
+            check_contents_root(chapter_home() / FAMILY_FOLDER, writable)
+        ),
+        REPO_DIR_PARAM: str(check_contents_root(REPO_DIR, writable)),
+        PROXY_PORT_PARAM: str(proxy_port),
+        EXTRA_PORT_PARAM: str(proxy_port if extra_port is None else extra_port),
     }
     if system_tmp:
         params[SYSTEM_TMP_PARAM] = SYSTEM_TMP_ON

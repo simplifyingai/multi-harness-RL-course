@@ -67,7 +67,7 @@ from install import (
 from lfm_files import MAX_CALLS, chapter_home, short_path, tilde
 from loopback import NetworkReport, NetworkWatch, describe
 from make_csv_tasks import ensure_tasks
-from sandbox import SandboxError, sandbox_command, sandbox_params
+from sandbox import RUNS_FOLDER, SandboxError, sandbox_command, sandbox_params
 from scripted_replies import (
     NotScriptedError,
     Reply,
@@ -100,7 +100,6 @@ from wire import (
 )
 
 PROXY_URL = "http://127.0.0.1:8200"
-RUNS_FOLDER = "runs"
 TASK_FOLDER, STATE_FOLDER = "task", "state"
 RUN_FILE, ROLLOUT_FILE, STDERR_FILE = "run.json", "rollout.json", "stderr.txt"
 STOP_WAIT_S = 10
@@ -350,7 +349,10 @@ def run_boxed(wiring: Wiring, folders: RunFolders, timeout_s: int) -> Process:
     try:
         # The box hides the folder of gold answers (in COURSE_HOME, not data/).
         params = sandbox_params(
-            workdir=folders.task, state_dir=folders.state, tasks_dir=gold_folder()
+            workdir=folders.task,
+            state_dir=folders.state,
+            tasks_dir=gold_folder(),
+            proxy_port=wiring.proxy_port,  # loopback to the proxy only
         )
         argv = sandbox_command(wiring.argv, params=params)
     except SandboxError as error:
