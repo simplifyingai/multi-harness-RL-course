@@ -455,7 +455,10 @@ after another. A file that is not there yet is fine: `realpath` answers
 "No such file", and the tool goes on. `realpath` walks through every parent
 folder, and under v1 those folders are hidden. So it answers EPERM instead.
 The tool treats that as a real error and stops, and `answer.txt` is never
-written. Every task, solved or not, scores 0. `write_tool.py` does Pi's three
+written, however right the answer was. In the project's record (run log 15)
+Pi scored 0 of 24 after SFT and 0 of 24 after RL under v1; the base model,
+3 of 24. Once the profile was fixed they scored 4, 9 and 9 of 24.
+`write_tool.py` does Pi's three
 steps through the same C library call, and prints the same words the project's
 log recorded for Pi under the first profile:
 
