@@ -15,9 +15,10 @@ the rows, the loss, the AdamW step, the adapter file and the POST. Both
 check that no session id (the harness's API key) is ever printed whole and
 that the project's checkout is left exactly as it was.
 
-Skipped without a checkout of the project (``MHRL_PROJECT``, default
-``~/sai_work/multi-harness-rl``) that has its environment, its pinned Claude
-Code and the model's tokenizer.
+The stack uses ``MHRL_ENGINE_PORT`` and ``MHRL_PROXY_PORT`` when they are
+set, else free ports. Skipped without a checkout of the project
+(``MHRL_PROJECT``, default ``~/sai_work/multi-harness-rl``) that has its
+environment, its pinned Claude Code and the model's tokenizer.
 """
 
 from __future__ import annotations
@@ -90,8 +91,10 @@ def stack(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, str]]:
     env = {
         **os.environ,
         "MHRL_PROJECT": str(PROJECT),
-        "MHRL_ENGINE_PORT": str(free_port()),
-        "MHRL_PROXY_PORT": str(free_port()),
+        # The ports in the environment when set (the run log's 8129 and
+        # 8209), else free ones the system hands out.
+        "MHRL_ENGINE_PORT": os.environ.get("MHRL_ENGINE_PORT") or str(free_port()),
+        "MHRL_PROXY_PORT": os.environ.get("MHRL_PROXY_PORT") or str(free_port()),
         "COURSE_HOME": str(tmp_path_factory.mktemp("stack-home")),
         "PYTHONDONTWRITEBYTECODE": "1",
     }
