@@ -1,0 +1,14 @@
+{
+  "source": "chapter 24's noise.py, 'every pair of checkpoints, cell by cell': the project's evaluation records of 2026-10-06 (Pi from its re-run after chapter 19's sandbox fix), 24 held-out tasks per harness",
+  "pairs": [
+    {"pair": "base -> sft", "harness": "mini-swe-agent", "cells": 24, "before": 24, "after": 18, "gained": 0, "lost": 6},
+    {"pair": "base -> sft", "harness": "claude-code", "cells": 24, "before": 15, "after": 17, "gained": 7, "lost": 5},
+    {"pair": "base -> sft", "harness": "pi", "cells": 24, "before": 4, "after": 9, "gained": 7, "lost": 2},
+    {"pair": "base -> rl", "harness": "mini-swe-agent", "cells": 24, "before": 24, "after": 20, "gained": 0, "lost": 4},
+    {"pair": "base -> rl", "harness": "claude-code", "cells": 24, "before": 15, "after": 18, "gained": 7, "lost": 4},
+    {"pair": "base -> rl", "harness": "pi", "cells": 24, "before": 4, "after": 9, "gained": 8, "lost": 3},
+    {"pair": "sft -> rl", "harness": "mini-swe-agent", "cells": 24, "before": 18, "after": 20, "gained": 2, "lost": 0},
+    {"pair": "sft -> rl", "harness": "claude-code", "cells": 24, "before": 17, "after": 18, "gained": 2, "lost": 1},
+    {"pair": "sft -> rl", "harness": "pi", "cells": 24, "before": 9, "after": 9, "gained": 5, "lost": 5}
+  ]
+}

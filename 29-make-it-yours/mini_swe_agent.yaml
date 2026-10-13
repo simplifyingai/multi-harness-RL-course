@@ -1,0 +1,136 @@
+# mini-swe-agent (2.4.6) configuration for chapter 29's CSV task family.
+#
+# The project's file (multi-harness-rl: configs/harnesses/mini_swe_agent.yaml),
+# copied below this header with its SQLite wording rewritten for a CSV
+# file: the instance template (the tools it names, the first step, the
+# example reply) and the warning on a too-long output. Of the four
+# harnesses, only mini-swe-agent's config describes the job, so this is the
+# one harness setting a new task family changes. The program is upstream
+# mini-swe-agent, unmodified. This file takes the place of its built-in
+# `mini.yaml` and keeps its protocol: native tool calls with a single `bash`
+# tool (mini-swe-agent v2's default), one command per reply, each run in a
+# fresh subshell, and the same way to finish
+# (`echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`). The project had already
+# rewritten the instance template once, for a SQLite question instead of a
+# code issue.
+#
+# Nothing per-rollout lives here. wire.py writes a per-run overlay that
+# mini-swe-agent merges on top: model_name (`openai/<served model>`),
+# model_kwargs.api_base (`<proxy>/v1`), model_kwargs.api_key (the capture
+# session id), agent.step_limit and agent.wall_time_limit_seconds.
+#
+# Temperature is deliberately NOT set: the capture session owns the sampling
+# policy (training rollouts at 1.0, evaluation at 0.0) and the proxy enforces it.
+
+agent:
+  agent_class: interactive
+  mode: yolo
+  confirm_exit: false
+  step_limit: 8
+  # A local model has no price, so the cost limit is off (cost stays 0.0).
+  cost_limit: 0
+  max_consecutive_format_errors: 3
+  system_template: |
+    You are a helpful assistant that can interact with a computer.
+  instance_template: |
+    Please solve this task: {{task}}
+
+    You work in the folder that holds the task's files and run bash commands there with the bash tool.
+    `python3` and `sqlite3` are installed. Useful commands:
+
+    ```bash
+    head -5 data.csv
+    wc -l data.csv
+    python3 -c "import csv; rows = list(csv.DictReader(open('data.csv'))); print(len(rows))"
+    ```
+
+    ## Recommended Workflow
+
+    1. Look at the files in the folder and at the CSV file's header.
+    2. Compute with commands until you are sure of the answer.
+    3. Write ONLY the final answer to the file the task names, for example: `echo "42" > answer.txt`
+    4. Finish your work by issuing the following command: `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`.
+       Do not combine it with any other command. <important>After this command, you cannot continue working on this task.</important>
+
+    ## Command Execution Rules
+
+    Each response should include:
+
+    1. **Reasoning text** where you explain your analysis and plan
+    2. Exactly one bash tool call with your command
+
+    Directory or environment variable changes are not persistent. Every action is executed in a new subshell.
+
+    Example of a CORRECT response:
+    <example_response>
+    I need to know which columns the CSV file has before I can answer the question.
+
+    [Makes bash tool call with {"command": "head -5 data.csv"} as arguments]
+    </example_response>
+
+    <system_information>
+    {{system}} {{release}} {{version}} {{machine}}
+    </system_information>
+
+environment:
+  environment_class: local
+  # Seconds one command may run before mini-swe-agent kills it.
+  timeout: 60
+  env:
+    PAGER: cat
+    MANPAGER: cat
+    LESS: -R
+    PIP_PROGRESS_BAR: "off"
+    TQDM_DISABLE: "1"
+
+model:
+  # mini-swe-agent's default model class: litellm with the `bash` tool.
+  model_class: litellm
+  # Replaced per run with `openai/<served model>`; litellm routes `openai/`
+  # to any OpenAI-compatible endpoint given as api_base.
+  model_name: openai/lfm2.5-2.6b
+  # The served model is not in litellm's price table.
+  cost_tracking: ignore_errors
+  model_kwargs:
+    drop_params: true
+    # Seconds per model request. Up to four rollouts share one serial engine,
+    # so one call can queue for minutes; mhrl's hard timeout still applies.
+    timeout: 600
+  observation_template: |
+    {%- if output.output | length < 4000 -%}
+    {
+      "returncode": {{ output.returncode }},
+      "output": {{ output.output | tojson }}
+      {%- if output.exception_info %}, "exception_info": {{ output.exception_info | tojson }}{% endif %}
+    }
+    {%- else -%}
+    {
+      "returncode": {{ output.returncode }},
+      "output_head": {{ output.output[:2000] | tojson }},
+      "output_tail": {{ output.output[-2000:] | tojson }},
+      "elided_chars": {{ output.output | length - 4000 }},
+      "warning": "Output too long. Print fewer rows or only the columns you need."
+      {%- if output.exception_info %}, "exception_info": {{ output.exception_info | tojson }}{% endif %}
+    }
+    {%- endif -%}
+  format_error_template: |
+    {% if finish_reason is defined and (finish_reason == "length" or (finish_reason == "tool_calls" and not has_tool_calls)) -%}
+    Your previous response reached the output token limit (finish_reason={{ finish_reason }}) before you produced a tool call, so it was cut off. Respond more concisely and finish with exactly one bash tool call. If you need to think more, do so briefly.
+    {%- else -%}
+    Tool call error:
+
+    <error>
+    {{error}}
+    </error>
+
+    Here is general guidance on how to submit correct toolcalls:
+
+    Every response needs to use the 'bash' tool at least once to execute commands.
+
+    Call the bash tool with your command as the argument:
+    - Tool: bash
+    - Arguments: {"command": "your_command_here"}
+
+    If you want to end the task, please issue the following command: `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`
+    without any other command.
+    {%- endif %}
