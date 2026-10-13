@@ -101,8 +101,10 @@ Every output below is copied from the run log, made from a clean
 `COURSE_HOME/25-sft-in-harnesses` on an M3 Pro with 18 GB, everything under
 `nice -n 10`. Steps 00 to 15 ran at commit `a3411ac`, steps 16 to 19 at
 `c71f0ed`, which changed only `memory_probe.py` (step 16's fitted curve)
-and `quick_eval.py` (its `--label`). The steps without the model did not
-wait. Before each step with the model, a gate
+and `quick_eval.py` (its `--label`). Commit `04b3aea`, after the run,
+answers a code review of those changes; no output below changes with it
+(the floor it puts under the fitted curve sits below every projection
+step 16 made). The steps without the model did not wait. Before each step with the model, a gate
 waited until nobody had touched the keyboard or mouse for 10 minutes,
 nothing had rendered for 120 s, memory pressure was normal and at least
 40% of memory was free; during each, memory was read every 5 s, ready to
@@ -601,7 +603,7 @@ cells and a Pi install) and 2 min 54 s
 
 ## The files
 
-Line counts at commit `c71f0ed`: all lines, and the lines of code (no blank
+Line counts at commit `04b3aea`: all lines, and the lines of code (no blank
 lines, comments or docstrings), counted with Python's own tokenizer.
 
 | file | lines | code | what it is |
@@ -609,11 +611,11 @@ lines, comments or docstrings), counted with Python's own tokenizer.
 | `teacher.py` | 453 | 245 | the project's answer-key teacher: four paths, the answer saved before the finish |
 | `engine.py` | 1,180 | 579 | chapter 24's engine (874 lines), plus `--oracle` and adapter switching (`--adapter`, `POST /admin/adapter`) |
 | `start.sh` | 351 | | chapter 24's stack, plus the teacher on `ORACLE_PORT` |
-| `collect.py` | 896 | 476 | the project's `collect_demonstrations`: 4 rollouts at a time, the file put in job order, the mask shown |
+| `collect.py` | 904 | 480 | the project's `collect_demonstrations`: 4 rollouts at a time, the file put in job order, the mask shown |
 | `training.py` | 445 | 194 | the project's `mhrl/training/common.py`: rows, chunked attention, checkpointing, the chunked LM head; chapter 14's loop |
 | `train_sft.py` | 396 | 248 | chapter 14's trainer reading captured rows; `--no-bias-correction` |
-| `memory_probe.py` | 852 | 471 | one pass per row length in three settings, every row projected first, refused with its reason |
-| `quick_eval.py` | 622 | 346 | chapter 24's evaluation, base against an adapter on the same cells, paired, the project's row boxed |
+| `memory_probe.py` | 859 | 475 | one pass per row length in three settings, every row projected first, refused with its reason |
+| `quick_eval.py` | 624 | 348 | chapter 24's evaluation, base against an adapter on the same cells, paired, the project's row boxed |
 | `lfm.py`, `lora.py`, `tasks.py` | 299, 188, 157 | 126, 89, 61 | chapter 24's model with adapter switching; chapter 14's LoRA with a check on the adapter file; the tasks with the training split |
 | `project_run.py`, `data/` | | | chapter 14's reader of the project's SFT metrics; the 230 questions, five databases and the project's records |
 | `run_one.py`, `evaluate.py`, `noise.py`, `install.py`, `wire.py` and the rest | | | chapter 24's, unchanged but for this chapter's folder name |
