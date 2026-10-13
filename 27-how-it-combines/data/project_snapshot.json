@@ -1,0 +1,247 @@
+{
+ "code": {
+  "configs/harnesses/mini_swe_agent.yaml": 130,
+  "configs/harnesses/mini_swe_agent_textbased.yaml": 156,
+  "configs/harnesses/sandbox.sb": 103,
+  "main.py": 6,
+  "mhrl/__init__.py": 0,
+  "mhrl/cli.py": 322,
+  "mhrl/config.py": 107,
+  "mhrl/engine/__init__.py": 0,
+  "mhrl/engine/oracle.py": 270,
+  "mhrl/engine/policy.py": 448,
+  "mhrl/engine/server.py": 234,
+  "mhrl/engine/toolcalls.py": 187,
+  "mhrl/evaluate.py": 129,
+  "mhrl/harnesses/__init__.py": 5,
+  "mhrl/harnesses/base.py": 422,
+  "mhrl/harnesses/claude_code.py": 207,
+  "mhrl/harnesses/errors.py": 23,
+  "mhrl/harnesses/mini_swe_agent.py": 199,
+  "mhrl/harnesses/pi.py": 248,
+  "mhrl/harnesses/process.py": 333,
+  "mhrl/harnesses/sandbox.py": 206,
+  "mhrl/harnesses/smoke.py": 205,
+  "mhrl/lora.py": 116,
+  "mhrl/rollout.py": 336,
+  "mhrl/tasks/__init__.py": 0,
+  "mhrl/tasks/core.py": 502,
+  "mhrl/tasks/databases.py": 1373,
+  "mhrl/tasks/generate.py": 386,
+  "mhrl/tasks/questions.py": 2362,
+  "mhrl/training/__init__.py": 0,
+  "mhrl/training/common.py": 237,
+  "mhrl/training/grpo.py": 270,
+  "mhrl/training/sft.py": 178,
+  "scripts/serve.sh": 60,
+  "scripts/setup.sh": 16,
+  "scripts/train_from_scratch.sh": 49,
+  "tests/__init__.py": 0,
+  "tests/test_core.py": 129,
+  "tests/test_harnesses.py": 713,
+  "tests/test_oracle.py": 123,
+  "tests/test_tasks.py": 670
+ },
+ "commands": [
+  "demo",
+  "eval",
+  "demos",
+  "sft",
+  "grpo",
+  "steps",
+  "report"
+ ],
+ "commit": "25074c0",
+ "files": {
+  "openenv:export.py": 246,
+  "openenv:graph.py": 496,
+  "openenv:validate.py": 439,
+  "project:configs/harnesses/mini_swe_agent.yaml": 130,
+  "project:configs/harnesses/mini_swe_agent_textbased.yaml": 156,
+  "project:configs/harnesses/sandbox.sb": 103,
+  "project:mhrl/cli.py": 322,
+  "project:mhrl/config.py": 107,
+  "project:mhrl/engine/oracle.py": 270,
+  "project:mhrl/engine/policy.py": 448,
+  "project:mhrl/engine/server.py": 234,
+  "project:mhrl/engine/toolcalls.py": 187,
+  "project:mhrl/evaluate.py": 129,
+  "project:mhrl/harnesses/base.py": 422,
+  "project:mhrl/harnesses/claude_code.py": 207,
+  "project:mhrl/harnesses/mini_swe_agent.py": 199,
+  "project:mhrl/harnesses/pi.py": 248,
+  "project:mhrl/harnesses/process.py": 333,
+  "project:mhrl/harnesses/sandbox.py": 206,
+  "project:mhrl/harnesses/smoke.py": 205,
+  "project:mhrl/lora.py": 116,
+  "project:mhrl/rollout.py": 336,
+  "project:mhrl/tasks/core.py": 502,
+  "project:mhrl/tasks/databases.py": 1373,
+  "project:mhrl/tasks/generate.py": 386,
+  "project:mhrl/tasks/questions.py": 2362,
+  "project:mhrl/training/common.py": 237,
+  "project:mhrl/training/grpo.py": 270,
+  "project:mhrl/training/sft.py": 178,
+  "project:scripts/serve.sh": 60,
+  "project:scripts/setup.sh": 16,
+  "project:scripts/train_from_scratch.sh": 49,
+  "project:tests/test_core.py": 129,
+  "project:tests/test_harnesses.py": 713,
+  "project:tests/test_oracle.py": 123,
+  "project:tests/test_tasks.py": 670
+ },
+ "names": {
+  "project:mhrl/cli.py": {
+   "CliDefaults": 14,
+   "CliDefaults.GRPO_LR": 1,
+   "CliDefaults.SFT_LR": 1,
+   "balanced": 24,
+   "main": 88,
+   "markdown_results": 32,
+   "print_steps": 37
+  },
+  "project:mhrl/config.py": {
+   "Defaults": 23,
+   "Defaults.ADVANTAGE_EPS": 1,
+   "Defaults.CLIP_EPSILON": 1,
+   "Defaults.END_OF_TURN": 1,
+   "Defaults.PREFILL_STEP": 1,
+   "Defaults.TOOL_CALL_END": 1,
+   "Defaults.TOOL_CALL_START": 1,
+   "Settings": 55,
+   "Settings.eval_temperature": 1,
+   "Settings.length_guard_tokens": 1,
+   "Settings.lora_layers": 1,
+   "Settings.lora_rank": 1,
+   "Settings.lora_scale": 1,
+   "Settings.max_completion_tokens": 1,
+   "Settings.max_model_calls": 1,
+   "Settings.max_prompt_tokens": 1,
+   "Settings.model_path": 1,
+   "Settings.rollout_timeout_s": 1,
+   "Settings.token_budget": 1,
+   "Settings.train_temperature": 1,
+   "get_settings": 7
+  },
+  "project:mhrl/engine/oracle.py": {
+   "AnswerKeyTeacher": 202,
+   "AnswerKeyTeacher._steps": 55
+  },
+  "project:mhrl/engine/policy.py": {
+   "PolicyEngine._remember": 11,
+   "PolicyEngine._restore": 26,
+   "PolicyEngine._sample": 63,
+   "PolicyEngine._sampler": 13,
+   "PolicyEngine.generate": 38,
+   "PolicyEngine.render": 21,
+   "PolicyEngine.set_adapter": 20,
+   "_to_float32": 12
+  },
+  "project:mhrl/engine/server.py": {
+   "MLX_THREADS": 1,
+   "create_app.chat": 40,
+   "to_openai": 53
+  },
+  "project:mhrl/engine/toolcalls.py": {
+   "parse_calls": 36,
+   "split_reply": 19
+  },
+  "project:mhrl/evaluate.py": {
+   "evaluate": 46,
+   "format_table": 21,
+   "summarize": 29
+  },
+  "project:mhrl/harnesses/base.py": {
+   "Harness.run": 80,
+   "base_environment": 30,
+   "get_harness": 21
+  },
+  "project:mhrl/harnesses/claude_code.py": {
+   "ClaudeCode": 126,
+   "ClaudeCode.command": 34,
+   "ClaudeCode.environment": 27,
+   "PINNED_VERSION": 1,
+   "REMINDER_OFF": 1
+  },
+  "project:mhrl/harnesses/mini_swe_agent.py": {
+   "MiniSweAgent": 146
+  },
+  "project:mhrl/harnesses/pi.py": {
+   "Pi": 172
+  },
+  "project:mhrl/harnesses/process.py": {
+   "kill_tree": 42,
+   "run_logged": 74
+  },
+  "project:mhrl/harnesses/sandbox.py": {
+   "check_writable_root": 34,
+   "sandbox_command": 40,
+   "sandbox_params": 33
+  },
+  "project:mhrl/harnesses/smoke.py": {
+   "main": 28,
+   "smoke_once": 50
+  },
+  "project:mhrl/lora.py": {
+   "apply_lora": 25,
+   "load_adapter": 14,
+   "save_adapter": 13,
+   "zero_adapter": 13
+  },
+  "project:mhrl/rollout.py": {
+   "CaptureClient.close": 7,
+   "CaptureClient.open_session": 34,
+   "CaptureClient.rollout": 12,
+   "count_calls": 13,
+   "reward_for": 17,
+   "run_rollout": 89,
+   "token_bonus": 17,
+   "tool_bonus": 13
+  },
+  "project:mhrl/tasks/core.py": {
+   "check_answer": 42,
+   "grade": 33,
+   "load_tasks": 45,
+   "prepare_workdir": 26,
+   "task_instruction": 22
+  },
+  "project:mhrl/tasks/databases.py": {
+   "build_database": 28
+  },
+  "project:mhrl/tasks/generate.py": {
+   "generate_tasks": 39
+  },
+  "project:mhrl/tasks/questions.py": {
+   "draw_instances": 53,
+   "resolve_answer": 26
+  },
+  "project:mhrl/training/common.py": {
+   "TrainItem": 19,
+   "batches": 15,
+   "chunked_attention": 49,
+   "dedupe_shared_prefixes": 33,
+   "item_from_sequence": 18,
+   "load_policy": 20,
+   "token_logprobs": 25
+  },
+  "project:mhrl/training/grpo.py": {
+   "group_advantages": 14,
+   "train_grpo": 186,
+   "train_grpo.loss_fn": 6,
+   "use_adapter": 13
+  },
+  "project:mhrl/training/sft.py": {
+   "collect_demonstrations": 40,
+   "demo_items": 19,
+   "train_sft": 71,
+   "train_sft.loss_fn": 2
+  },
+  "project:scripts/serve.sh": {
+   "start": 12,
+   "status": 5,
+   "stop": 13
+  }
+ },
+ "openenv_commit": "3f14355",
+ "version": 1
+}
