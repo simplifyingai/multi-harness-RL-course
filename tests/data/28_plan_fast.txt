@@ -1,0 +1,58 @@
+━━ clone: a fresh copy of the project, under COURSE_HOME
+  $ mkdir -p $COURSE_HOME/28-capstone
+  $ git clone --quiet ~/sai_work/multi-harness-rl $COURSE_HOME/28-capstone/multi-harness-rl
+  $ git -C $COURSE_HOME/28-capstone/multi-harness-rl log -1 '--format=%h %s'
+━━ setup: uv sync, scripts/setup.sh, the Node harnesses at their pins
+  uv and npm run with private settings ($COURSE_HOME/28-capstone/installers): your uv.toml, ~/.netrc,
+  ~/.npmrc, git config and Hugging Face token are never read
+  no $COURSE_HOME/models/LFM2.5-2.6B-MLX-4bit: setup.sh will fetch LiquidAI/LFM2.5-2.6B-MLX-4bit (~1.5 GB)
+  $ uv sync   (uv: private settings)
+  $ scripts/setup.sh   (uv: private settings)
+  the model every stage loads (MHRL_MODEL_PATH): ours, against Liquid's export
+  $ cmp $COURSE_HOME/models/lfm2.5-2.6b-4bit-ours/model.safetensors $COURSE_HOME/models/LFM2.5-2.6B-MLX-4bit/model.safetensors
+  Claude Code 2.1.290 into tools/claude-code/, where mhrl/harnesses/claude_code.py looks
+  $ npm install --prefix tools/claude-code/npm --save-exact --no-audit --no-fund @anthropic-ai/claude-code@2.1.290   (npm: private settings)
+  $ mkdir -p $COURSE_HOME/28-capstone/multi-harness-rl/tools/claude-code/2.1.290
+  $ ln -sfn $COURSE_HOME/28-capstone/multi-harness-rl/tools/claude-code/npm/node_modules/@anthropic-ai/claude-code/bin/claude.exe $COURSE_HOME/28-capstone/multi-harness-rl/tools/claude-code/2.1.290/claude
+  Pi 1.0.4 into tools/pi/, where mhrl/harnesses/pi.py looks
+  $ npm install --prefix tools/pi --save-exact --no-audit --no-fund @earendil-works/pi-coding-agent@1.0.4   (npm: private settings)
+  the versions, as each harness reports itself (a private HOME, so none writes yours)
+  $ env HOME=$COURSE_HOME/28-capstone/installers/probe CLAUDE_CONFIG_DIR=$COURSE_HOME/28-capstone/installers/probe/claude DISABLE_AUTOUPDATER=1 tools/claude-code/2.1.290/claude --version
+  $ env HOME=$COURSE_HOME/28-capstone/installers/probe node tools/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js --version
+  $ .venv/bin/python -c 'import importlib.metadata as m; print("mini-swe-agent", m.version("mini-swe-agent"))'
+━━ tasks: the databases and the train/test task files
+  $ .venv/bin/python -m mhrl.tasks.generate
+━━ tests: the project's own
+  $ .venv/bin/python -m pytest -q
+━━ the servers: engine 8149, teacher 8159, proxy 8219
+  $ env MHRL_PROJECT=$COURSE_HOME/28-capstone/multi-harness-rl ./stack.sh start
+━━ smoke: one real captured rollout through the proxy
+  $ .venv/bin/python -m mhrl.harnesses.smoke --harness claude-code
+━━ pipeline: train_from_scratch.sh's stages, run capstone-fast
+  EVAL_LIMIT=6 DEMO_LIMIT=10 SFT_EPOCHS=1 GRPO_STEPS=2 GRPO_TASKS=2 GRPO_GROUP=4
+  model $COURSE_HOME/models/lfm2.5-2.6b-4bit-ours
+
+=== 1/5 baseline: the base model in every harness ===
+  $ .venv/bin/python -m mhrl.cli eval --run capstone-fast --harnesses mini-swe-agent,claude-code,pi --limit 6 --label base
+
+=== 2/5 answer-key demonstrations, then supervised fine-tuning ===
+  $ .venv/bin/python -m mhrl.cli demos --run capstone-fast --harnesses mini-swe-agent,claude-code --limit 10 --teacher-port 8159
+  $ .venv/bin/python -m mhrl.cli sft --run capstone-fast --epochs 1
+
+=== 3/5 evaluate the SFT model ===
+  $ .venv/bin/python -m mhrl.cli eval --run capstone-fast --harnesses mini-swe-agent,claude-code,pi --limit 6 --label sft --adapter runs/capstone-fast/sft/adapter.safetensors
+
+=== 4/5 GRPO through the training harnesses ===
+  $ .venv/bin/python -m mhrl.cli grpo --run capstone-fast --harnesses mini-swe-agent,claude-code --init runs/capstone-fast/sft/adapter.safetensors --steps 2 --tasks-per-step 2 --group 4
+  $ .venv/bin/python -m mhrl.cli steps --run capstone-fast
+
+=== 5/5 evaluate the RL model ===
+  $ .venv/bin/python -m mhrl.cli eval --run capstone-fast --harnesses mini-swe-agent,claude-code,pi --limit 6 --label rl --adapter runs/capstone-fast/grpo/adapter_final.safetensors
+
+=== results ===
+  $ .venv/bin/python -m mhrl.cli report --run capstone-fast --harnesses mini-swe-agent,claude-code,pi
+
+=== done ===
+  $ $COURSE_HOME/28-capstone/multi-harness-rl/.venv/bin/python -B -s ./read_results.py --run-dir $COURSE_HOME/28-capstone/multi-harness-rl/runs/capstone-fast
+━━ stop: only the servers this chapter started
+  $ env MHRL_PROJECT=$COURSE_HOME/28-capstone/multi-harness-rl ./stack.sh stop
