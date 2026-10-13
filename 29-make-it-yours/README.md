@@ -371,7 +371,7 @@ What each run shows:
    two attempts: DNS lookups (`/private/var/run/mDNSResponder`), before any
    connect. The catcher saw nothing: it only sees clients that honour the
    proxy setting.
-3. **Four switches stop it.** `wire.py` sets `QWEN_USAGE_STATISTICS_ENABLED`
+3. **Four switches stop what the catcher saw.** `wire.py` sets `QWEN_USAGE_STATISTICS_ENABLED`
    and `QWEN_TELEMETRY_ENABLED` to `false`, and `QWEN_CODE_DISABLE_PRECONNECT`
    and `QWEN_DISABLE_AUTO_TITLE` to `1`. With them, the catcher saw no
    connection through `HTTPS_PROXY`, and the sandbox refused no attempt in
