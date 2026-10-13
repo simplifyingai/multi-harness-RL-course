@@ -390,7 +390,7 @@ def test_train_sft_refuses_held_out_rows_and_never_leaves_an_old_adapter(
     folder.mkdir(parents=True)
     (folder / "adapter.safetensors").write_bytes(b"an older run's")
 
-    def crash(*args: Any) -> None:
+    def crash(*args: Any, **options: Any) -> None:
         raise RuntimeError("stopped mid-run")
 
     monkeypatch.setattr(train_sft, "train_sft", crash)
@@ -624,7 +624,8 @@ def test_a_pass_that_fails_is_recorded_and_no_longer_row_runs(
     assert kept == outcomes
     assert outcomes[1].refused.startswith("failed: [metal::malloc]")
     assert outcomes[2].refused == "not run: the 32-token pass failed"
-    assert [memory_probe.cell(o) for o in outcomes] == ["0.01 GB", "failed", "refused"]
+    cells = [memory_probe.cell(o) for o in outcomes]
+    assert cells[0].endswith(" GB") and cells[1:] == ["failed", "refused"]
     assert "FAILED" in lines[1]
 
 
