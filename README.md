@@ -93,7 +93,7 @@ About 258 minutes of video in 29 chapters.
 | 24 | [Measuring fairly: baseline, pass@1 and noise](24-measuring/) | 10 | ready |
 | 25 | [SFT through the harnesses (and fitting it in 9 GB)](25-sft-in-harnesses/) | 12 | ready |
 | 26 | [GRPO through the harnesses, and the run that went wrong](26-grpo-in-harnesses/) | 9 | ready |
-| 27 | How it all combines | 8 | coming |
+| 27 | [How it all combines](27-how-it-combines/) | 8 | ready |
 | 28 | Capstone: run the whole pipeline, read the results honestly | 10 | coming |
 | 29 | Make it yours | 10 | coming |
 
