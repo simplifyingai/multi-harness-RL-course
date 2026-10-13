@@ -58,7 +58,7 @@ ENGINE_PORT=8169 PROXY_PORT=8239 ./start.sh scripted   # no model
 uv run run_one.py qwen-code --proxy-url http://127.0.0.1:8239
 uv run run_one.py mini-swe-agent --proxy-url http://127.0.0.1:8239
 uv run try_family.py --limit 3 --proxy-url http://127.0.0.1:8239
-uv run sandbox.py --workdir <a task folder> --proxy-port 8239 -- cat <a file>   # what a rollout's box lets it read
+uv run sandbox.py --workdir <a task folder in runs/> --proxy-port 8239 -- cat <a file>   # what a rollout's box lets it read
 ./start.sh stop
 ENGINE_PORT=8169 PROXY_PORT=8239 ./start.sh            # the model
 uv run try_family.py --proxy-url http://127.0.0.1:8239                # 20 tasks, mini-swe-agent
@@ -90,7 +90,7 @@ child.
 | `uv run power.py` | 261 paired tasks for +10 points, with chapter 24's churn | 0 · 1.00 s · 0.02 GB |
 | `uv run install.py mini-swe-agent qwen-code` | the two harnesses at their pins | 0 · 27.78 s · 0.18 GB |
 | `uv run wire.py qwen-code mini-swe-agent` | each harness's settings | 0 · 0.06 s · 0.03 GB |
-| `uv run qwen_probe.py` | six runs of Qwen Code against a stand-in model | 0 · 20.22 s · 0.36 GB |
+| `uv run qwen_probe.py` (re-run at `52bd7f7`, through the lock) | six runs of Qwen Code against a stand-in model | 0 · 20.41 s · 0.36 GB |
 | `uv run try_family.py --plan` | the protocol and the 20 tasks | 0 · 0.06 s · 0.03 GB |
 | `./start.sh scripted` | the proxy installed, the scripted engine | 0 · 6.52 s · 0.13 GB |
 | `uv run run_one.py qwen-code` (scripted) | solved in 4 calls; the first read 5,678 tokens | 0 · 3.28 s · 0.35 GB |
@@ -214,8 +214,9 @@ rules to `sandbox.sb`:
   the proxy and its 8-call budget, or the scripted engine's `/script`.
 
 `sandbox.py --workdir <task folder> -- <command>` runs one command in the box
-a rollout in that folder gets. From a cell of the scripted run, with the
-stack up (`11-box-check`):
+a rollout in that folder gets. The folder must be a task folder inside
+`runs/`, and the command can write in it, as a rollout can. From a cell of
+the scripted run, with the stack up (`11-box-check`):
 
 ```text
 $ grep -c "echo 18 > answer.txt" .../scripted-solve/mini-swe-agent/csv-s0-easy-01/trajectory.json   (outside the box)
@@ -297,31 +298,39 @@ each run changed from `wire.py`'s wiring in one way. The model was a
 stand-in on this machine. `HTTPS_PROXY` pointed at a **catcher**: a small
 program on this machine that writes down where each outside connection was
 going and refuses it, so nothing leaves the machine. A client that ignores
-`HTTPS_PROXY` never reaches the catcher, so after every run the probe also
-reads the sandbox's own refusals of Qwen Code's process from the system log
-(`log show`).
+`HTTPS_PROXY` never reaches the catcher, so the probe also reads the
+sandbox's own refusals from the system log (`log show`). It reads the log
+once, five seconds after the last run, and places each line by its own
+timestamp: read one second after each run, the log still lacked a run's
+lines, and it folds a repeated refusal into a "1 duplicate report for" line
+seconds later. A refusal naming a run's Qwen Code process counts for that
+run; one by another process counts for the run whose window it falls in,
+and every run's leftover processes are stopped with it. A zero says how
+many sandbox lines the log held in that window, so an empty log cannot
+pass for a clean run. This output is from a re-run of the probe after a
+second code review, at commit `52bd7f7`, through the render lock.
 
 ```text
 qwen_probe.py · what Qwen Code 0.24.7 does around the model
-  stand-in model  http://127.0.0.1:52050/v1 on this machine: keeps every request, answers `head -3 data.csv`, `echo 42 > answer.txt`, then text
-  catcher         HTTPS_PROXY=http://127.0.0.1:52051: writes down each outside connection asked for and refuses it
+  stand-in model  http://127.0.0.1:55781/v1 on this machine: keeps every request, answers `head -3 data.csv`, `echo 42 > answer.txt`, then text
+  catcher         HTTPS_PROXY=http://127.0.0.1:55782: writes down each outside connection asked for and refuses it
   every run       inside chapter 19's sandbox, a private HOME
 
 ━━ 1. its own switches left on
   exit           0
   outside connections asked for: 2
     gb4w8c3ygj-default-sea.rum.aliyuncs.com:443 (refused by the catcher)
-  sandbox        refused 0 direct connections (its own log)
+  sandbox        refused 0 attempts (DNS or connect) (log read, window 03:27:20–03:27:22, 0 sandbox lines of any kind)
 
 ━━ 2. its own switches left on, no HTTPS_PROXY: only the sandbox
   exit           0
   outside connections asked for: 0 (through HTTPS_PROXY only; a client that ignores it is stopped by the sandbox and not seen here)
-  sandbox        refused 2 direct connections (its own log)
+  sandbox        refused attempts (DNS or connect): 1 by the harness process, 1 in all (with any other sandboxed process in the run's window; its own log): /private/var/run/mDNSResponder ×1
 
 ━━ 3. with wire.py's switches
   exit           0
   outside connections asked for: 0 (through HTTPS_PROXY only; a client that ignores it is stopped by the sandbox and not seen here)
-  sandbox        refused 0 direct connections (its own log)
+  sandbox        refused 0 attempts (DNS or connect) (log read, window 03:27:24–03:27:26, 3 sandbox lines of any kind)
 
 ━━ 4. --bare (wire.py's setup)
   exit           0
@@ -329,7 +338,7 @@ qwen_probe.py · what Qwen Code 0.24.7 does around the model
   first request  25,387 characters: messages 14,840, tool descriptions 10,547
   tools offered  3: edit, read_file, run_shell_command
   max_tokens     32000 asked
-  sandbox        refused 0 direct connections (its own log)
+  sandbox        refused 0 attempts (DNS or connect) (log read, window 03:27:26–03:27:28, 1 sandbox lines of any kind)
 
 ━━ 5. without --bare
   exit           0
@@ -338,7 +347,7 @@ qwen_probe.py · what Qwen Code 0.24.7 does around the model
   tools offered  14: cron_create, cron_delete, cron_list, edit, glob, grep_search, loop_wakeup, monitor, read_file, read_mcp_resource, run_shell_command, web_fetch, write_file, zoom_image
   max_tokens     32000 asked
   request 4      26,820 characters, other tools (after the last reply): edit, glob, grep_search, read_file, write_file
-  sandbox        refused 0 direct connections (its own log)
+  sandbox        refused 0 attempts (DNS or connect) (log read, window 03:27:28–03:27:30, 2 sandbox lines of any kind)
 
 ━━ 6. read_file excluded too
   exit           0
@@ -346,7 +355,7 @@ qwen_probe.py · what Qwen Code 0.24.7 does around the model
   echo 42 > answer.txt   ran
   its log        result success · 3 turns · 1 refused by its permission rules
   answer.txt     '42'
-  sandbox        refused 0 direct connections (its own log)
+  sandbox        refused 0 attempts (DNS or connect) (log read, window 03:27:31–03:27:33, 1 sandbox lines of any kind)
 ```
 
 What each run shows:
@@ -357,13 +366,15 @@ What each run shows:
    service (RUM), and the request is its usage statistics. In a normal run
    that connection is made; here the catcher refused it.
 2. **The sandbox is the backstop.** With no `HTTPS_PROXY`, the same run went
-   straight for the internet, and the sandbox refused its process 2 direct
-   connections. The catcher saw none: it only sees clients that honour the
+   straight for the internet, and the sandbox refused Qwen Code's process
+   one attempt: a DNS lookup (`/private/var/run/mDNSResponder`), before any
+   connect. The catcher saw nothing: it only sees clients that honour the
    proxy setting.
 3. **Four switches stop it.** `wire.py` sets `QWEN_USAGE_STATISTICS_ENABLED`
    and `QWEN_TELEMETRY_ENABLED` to `false`, and `QWEN_CODE_DISABLE_PRECONNECT`
    and `QWEN_DISABLE_AUTO_TITLE` to `1`. With them, the catcher saw no
-   connection through `HTTPS_PROXY` and the sandbox refused none directly.
+   connection through `HTTPS_PROXY`, and the sandbox refused no attempt in
+   the run's window (its log held 3 sandbox lines there, none a refusal).
 4. **`--bare` is what fits the window.** It reads no settings file and offers
    three tools; the first request is 25,387 characters. Because it reads no
    settings file, every request asks for 32,000 output tokens. The proxy
@@ -624,7 +635,7 @@ power.py · how many paired tasks before a gain can be told from noise
 | 'to see +10 points at p<0.05 you need about 150 paired tasks' | **261** at 80% power with chapter 24's churn (31.5% of tasks flipping); 78 if the new checkpoint only gains; 377 if attempts are independent (from 60%). 150 tasks give 54.4% power, and reach 80% only while at most 17.5% of tasks flip | `02-power` |
 | (what 24 tasks per harness can show) | a real +10 points shows up as p < 0.05 in 2.8% to 6.5% of 24-task comparisons | `02-power` |
 | a fourth harness wired only through its base URL and key | the connection is three variables (`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`). It also needed `--bare`, 14 tools excluded and 4 switches off, measured below | `04-wire`, `05-qwen-probe` |
-| (not in the plan) | with its own switches on, Qwen Code asked twice for `gb4w8c3ygj-default-sea.rum.aliyuncs.com:443`, Alibaba Cloud's usage monitoring; with no `HTTPS_PROXY`, the sandbox refused its process 2 direct connections; with `QWEN_USAGE_STATISTICS_ENABLED`, `QWEN_TELEMETRY_ENABLED`, `QWEN_CODE_DISABLE_PRECONNECT` and `QWEN_DISABLE_AUTO_TITLE` set, none through the catcher and none refused by the sandbox (a zero through the catcher covers clients that honour `HTTPS_PROXY` only, so the sandbox's log is read too) | `05-qwen-probe` (runs 1 to 3) |
+| (not in the plan) | with its own switches on, Qwen Code asked twice for `gb4w8c3ygj-default-sea.rum.aliyuncs.com:443`, Alibaba Cloud's usage monitoring; with no `HTTPS_PROXY`, the sandbox refused its process 1 attempt, a DNS lookup; with `QWEN_USAGE_STATISTICS_ENABLED`, `QWEN_TELEMETRY_ENABLED`, `QWEN_CODE_DISABLE_PRECONNECT` and `QWEN_DISABLE_AUTO_TITLE` set, none through the catcher and no refused attempt in the run's window, its log read (a zero through the catcher covers clients that honour `HTTPS_PROXY` only, so the sandbox's log is read too) | `05-qwen-probe` (runs 1 to 3) |
 | (not in the plan) | the model runs' `lsof` watch: Qwen Code 265 samples over 42.4 s, connections to the proxy only; mini-swe-agent's 20 rollouts, the same. lsof samples, and a refused connect is invisible to it; the sandbox is what keeps the rest out | `23-one-qwen-model`, `22-family-model` |
 | (not in the plan) | excluding `read_file` made Qwen Code refuse `head -3 data.csv` through its shell: `Matching deny rule: "read_file"`; so `read_file` and `edit` stay offered | `05-qwen-probe` (run 6) |
 | (not in the plan) | without `--bare`: 14 tools, a first request of 52,510 characters, and a fourth request after the last reply; with it: 3 tools and 25,387 characters | `05-qwen-probe` (runs 4 and 5) |
