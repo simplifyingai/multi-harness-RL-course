@@ -702,7 +702,8 @@ measured: every attempt that must fail, and every step an agent needs.
 - **Secret protection**: credentials and `.env` files unreadable, the keychain
   unreachable, a fake `HOME`, a clean environment.
 - **Network isolation**: no DNS and no outside address; loopback only.
-- **Anti-reward-hacking isolation**: the gold answers unreadable.
+- **Anti-reward-hacking isolation**: the gold-answer file unreadable (a
+  neighbour rollout's folder is not: see the list above).
 - **Sandbox overreach**: a rule that hides too much breaks a tool silently
   and fakes a score.
 - **Hard timeout, process-tree reaping**: kill the group, sweep the tree,
