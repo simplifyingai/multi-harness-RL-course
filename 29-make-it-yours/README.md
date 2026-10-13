@@ -58,6 +58,7 @@ ENGINE_PORT=8169 PROXY_PORT=8239 ./start.sh scripted   # no model
 uv run run_one.py qwen-code --proxy-url http://127.0.0.1:8239
 uv run run_one.py mini-swe-agent --proxy-url http://127.0.0.1:8239
 uv run try_family.py --limit 3 --proxy-url http://127.0.0.1:8239
+uv run sandbox.py --workdir <a task folder> --proxy-port 8239 -- cat <a file>   # what a rollout's box lets it read
 ./start.sh stop
 ENGINE_PORT=8169 PROXY_PORT=8239 ./start.sh            # the model
 uv run try_family.py --proxy-url http://127.0.0.1:8239                # 20 tasks, mini-swe-agent
@@ -74,37 +75,47 @@ Node.js 22 or later (for Qwen Code), chapter 11's model in
 ## The run log
 
 Every output below is copied from the run log. It was made from a clean
-`COURSE_HOME/29-make-it-yours` at commit `42d67db`, on an M3 Pro with 18 GB,
-macOS 26.6.2, Node.js 22.22.0 and uv 0.11.21. The steps without the model
-ran under `nice -n 10`. The model's steps waited for the machine's shared
-render lock (another chapter's film was not rendering; the lock was taken
-at once) and ran at niceness 20. Seconds are wall time. Memory is the
+`COURSE_HOME/29-make-it-yours` at commit `153251c`, on an M3 Pro with
+18 GB, macOS 26.6.2, Node.js 22.22.0 and uv 0.11.21. The steps without the
+model ran under `nice -n 10`. The model's steps waited for the machine's
+shared render lock, which another chapter held while it recorded, took it
+at 01:53 and ran at niceness 20. Seconds are wall time. Memory is the
 largest single process the command ran (`/usr/bin/time -l`); for
 `try_family.py` and `run_one.py` that is the harness, which runs as their
 child.
 
 | command | what it shows | exit · seconds · memory |
 | --- | --- | --- |
-| `uv run make_csv_tasks.py` | 20 tasks from 12 templates, md5 `cd9bdf06…` | 0 · 0.04 s · 0.03 GB |
-| `uv run power.py` | 261 paired tasks for +10 points, with chapter 24's churn | 0 · 0.94 s · 0.03 GB |
-| `uv run install.py mini-swe-agent qwen-code` | the two harnesses at their pins | 0 · 27.24 s · 0.18 GB |
-| `uv run wire.py qwen-code mini-swe-agent` | each harness's settings | 0 · 0.05 s · 0.03 GB |
-| `uv run qwen_probe.py` | five runs of Qwen Code against a stand-in model | 0 · 8.21 s · 0.36 GB |
-| `uv run try_family.py --plan` | the protocol and the 20 tasks | 0 · 0.07 s · 0.03 GB |
-| `./start.sh scripted` | the proxy installed, the scripted engine | 0 · 5.52 s · 0.16 GB |
-| `uv run run_one.py qwen-code` (scripted) | solved in 4 calls; the first read 5,678 tokens | 0 · 3.08 s · 0.35 GB |
-| `uv run run_one.py mini-swe-agent` (scripted) | solved in 4 calls; the first read 537 tokens | 0 · 7.48 s · 0.25 GB |
-| `uv run try_family.py --limit 3` (scripted) | 3 of 3 | 0 · 12.75 s · 0.25 GB |
-| `./start.sh stop` | `engine stopped · 24 requests` | 0 · 2.07 s · 0.00 GB |
-| `uv run pytest tests/test_29_make_it_yours.py` | 48 passed, against the real proxy | 0 · 33.90 s · 0.36 GB |
-| `./start.sh` | the model's engine (1.6 GB loaded) | 0 · 11.17 s · 0.11 GB |
-| `uv run try_family.py` (the model) | 17 of 20, Wilson 95% 64.0% to 94.8% | 0 · 468.00 s · 0.25 GB |
-| `uv run run_one.py qwen-code` (the model) | correct, 6 calls | 0 · 36.70 s · 0.31 GB |
-| `./start.sh stop` | `engine stopped · 164 requests · peak memory 3.11 GB, the weights included` | 0 · 2.09 s · 0.00 GB |
+| `uv run make_csv_tasks.py` | 20 tasks from 12 templates, md5 `cd9bdf06…` | 0 · 0.05 s · 0.03 GB |
+| `uv run power.py` | 261 paired tasks for +10 points, with chapter 24's churn | 0 · 1.00 s · 0.02 GB |
+| `uv run install.py mini-swe-agent qwen-code` | the two harnesses at their pins | 0 · 27.78 s · 0.18 GB |
+| `uv run wire.py qwen-code mini-swe-agent` | each harness's settings | 0 · 0.06 s · 0.03 GB |
+| `uv run qwen_probe.py` | six runs of Qwen Code against a stand-in model | 0 · 20.22 s · 0.36 GB |
+| `uv run try_family.py --plan` | the protocol and the 20 tasks | 0 · 0.06 s · 0.03 GB |
+| `./start.sh scripted` | the proxy installed, the scripted engine | 0 · 6.52 s · 0.13 GB |
+| `uv run run_one.py qwen-code` (scripted) | solved in 4 calls; the first read 5,678 tokens | 0 · 3.28 s · 0.35 GB |
+| `uv run run_one.py mini-swe-agent` (scripted) | solved in 4 calls; the first read 537 tokens | 0 · 9.04 s · 0.25 GB |
+| `uv run try_family.py --limit 3` (scripted) | 3 of 3 | 0 · 13.36 s · 0.25 GB |
+| `uv run sandbox.py --workdir ... -- ...` (8 commands) | the box: another cell's files, the records, the gold, the repo refused | 0 · 0.50 s · 0.03 GB |
+| `./start.sh stop` | `engine stopped · 24 requests` | 0 · 2.06 s · 0.00 GB |
+| `uv run pytest tests/test_29_make_it_yours.py` | 55 passed, against the real proxy | 0 · 46.75 s · 0.35 GB |
+| `./start.sh` | the model's engine (1.6 GB loaded) | 0 · 8.54 s · 0.11 GB |
+| `uv run try_family.py` (the model) | 19 of 20, Wilson 95% 76.4% to 99.1% | 0 · 474.12 s · 0.25 GB |
+| `uv run run_one.py qwen-code` (the model) | correct, 6 calls | 0 · 42.66 s · 0.27 GB |
+| `./start.sh stop` | `engine stopped · 164 requests · peak memory 3.17 GB, the weights included` | 0 · 2.07 s · 0.00 GB |
 
-The numbers no script prints (reply lengths, the wrong cells command by
-command, Qwen Code's calls with the model) were read from the runs' own
-records into the run log's `26-measure.txt`.
+The numbers no script prints (reply lengths, cells command by command, Qwen
+Code's calls with the model) were read from the runs' own records into the
+run log's `26-measure.txt`, and every command the harnesses ran with the
+model was checked for anything outside its task folder (`27-outside-grep.txt`).
+
+**A first attempt is kept in the run log** (`first-attempt/`, commit
+`42d67db`). It ran the same steps before the sandbox's two new rules (below)
+and scored 17 of 20. A code review then found that its box let a rollout read
+other rollouts' folders. Every command the harnesses ran in it was checked:
+135 commands in mini-swe-agent's 20 cells and 5 tool calls in Qwen Code's,
+and none touched anything outside its own task folder. The run was made again
+with the box as shipped; "Two runs, one model" below compares them.
 
 ## A new task family: `make_csv_tasks.py`
 
@@ -175,10 +186,81 @@ What a new family changed, and what it did not:
 - **Where the gold answers live, which the box must hide.** Chapter 24's
   held-out records were bundled in its `data/` folder, and its sandbox hid
   that folder. This family's records are made under
-  `COURSE_HOME/29-make-it-yours/csv-tasks/`. With chapter 24's default, a
+  `COURSE_HOME/29-make-it-yours/csv-tasks/`. With chapter 24's choice, a
   test shows a harness could read them inside the box: `cat` on the file
-  succeeded. `run_one.py` now hides `csv-tasks/` (`tasks.gold_folder()`),
-  and the same `cat` is refused with `Operation not permitted`.
+  succeeded. The box now hides `csv-tasks/` (`tasks.gold_folder()`), and the
+  same `cat` is refused with `Operation not permitted`. That was not enough;
+  the next section is what else a rollout could read.
+
+## The box: what a rollout must not read
+
+Chapter 19's profile starts from `(allow default)` and lists what to hide.
+Hiding the gold-answer file leaves its copies readable. A scripted "solve"
+run writes `echo 18 > answer.txt` into its own records, a wrong cell's record
+names the expected answer, and this repository's generator remakes every
+task, gold included, from the seed in a task's id. This chapter adds two
+rules to `sandbox.sb`:
+
+- **The contents of regular files** under `runs/` (every rollout's folder),
+  `family/` (the run records) and this repository cannot be read, except in
+  the rollout's own task and state folders. Metadata and folder listings stay
+  readable, so a path through the parent folders still resolves. Two first
+  tries failed, and the profile's comments say how: denying the folders too
+  broke bash's `getcwd`, and an allow for the own folders written after the
+  deny did not win over it, so the own folders are left out inside the rule.
+  mini-swe-agent now reads a copy of its config from its state folder.
+- **Loopback only on the proxy's port** (chapter 19 left every loopback port
+  open). A command in the box can no longer reach the engine directly, around
+  the proxy and its 8-call budget, or the scripted engine's `/script`.
+
+`sandbox.py --workdir <task folder> -- <command>` runs one command in the box
+a rollout in that folder gets. From a cell of the scripted run, with the
+stack up (`11-box-check`):
+
+```text
+$ grep -c "echo 18 > answer.txt" .../scripted-solve/mini-swe-agent/csv-s0-easy-01/trajectory.json   (outside the box)
+3
+$ cat .../scripted-solve/mini-swe-agent/csv-s0-easy-01/task/answer.txt   (outside the box)
+18
+$ cat ../../csv-s0-easy-01/task/answer.txt
+  (in the box of ~/.cache/mhrl-course/29-make-it-yours/runs/eval/scripted-solve/mini-swe-agent/csv-s0-hard-01/task)
+  cat: ../../csv-s0-easy-01/task/answer.txt: Operation not permitted
+  exit 1
+$ cat ../../csv-s0-easy-01/trajectory.json
+  cat: ../../csv-s0-easy-01/trajectory.json: Operation not permitted
+  exit 1
+$ cat ../../../../../../family/scripted-solve/mini-swe-agent.jsonl
+  cat: ../../../../../../family/scripted-solve/mini-swe-agent.jsonl: Operation not permitted
+  exit 1
+$ cat ../../../../../../csv-tasks/seed-0.jsonl
+  cat: ../../../../../../csv-tasks/seed-0.jsonl: Operation not permitted
+  exit 1
+$ cat ~/sai_work/mhrl-code-ch29/29-make-it-yours/make_csv_tasks.py
+  cat: ~/sai_work/mhrl-code-ch29/29-make-it-yours/make_csv_tasks.py: Operation not permitted
+  exit 1
+$ /bin/bash -c 'pwd; head -2 data.csv; ls ../..'
+  ~/.cache/mhrl-course/29-make-it-yours/runs/eval/scripted-solve/mini-swe-agent/csv-s0-hard-01/task
+  order_id,date,region,rep,product,category,units,unit_price
+  1001,2026-01-05,South,Chloe Martin,Desk Lamp,Hardware,6,24.50
+  csv-s0-easy-01
+  csv-s0-hard-01
+  csv-s0-medium-01
+  exit 0
+$ curl -s -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:8239/health
+  200
+  exit 0
+$ curl -s -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:8169/health
+  000
+  exit 7
+```
+
+(The "in the box of" line, the same for every command, is shown once.) The
+neighbour's answer, its log, the records, the gold and the generator are
+refused. The rollout's own file, `pwd` and the names of its neighbours'
+folders still work. The proxy's port answers and the engine's does not.
+Both harnesses then ran every step below inside this box, the model's run
+included. The box was measured with mini-swe-agent and Qwen Code; Claude
+Code and Pi were not run again in this chapter.
 
 ## A fourth harness: Qwen Code
 
@@ -210,48 +292,61 @@ else on that list is what the next section found.
 
 ### What it does around the model: `qwen_probe.py`
 
-Before Qwen Code met the model, the probe ran it five times inside
-chapter 19's sandbox, each run changed from `wire.py`'s wiring in one way.
-The model was a stand-in on this machine. `HTTPS_PROXY` pointed at a
-**catcher**: a small program on this machine that writes down where each
-outside connection was going and refuses it, so nothing leaves the machine.
+Before Qwen Code met the model, the probe ran it six times inside the box,
+each run changed from `wire.py`'s wiring in one way. The model was a
+stand-in on this machine. `HTTPS_PROXY` pointed at a **catcher**: a small
+program on this machine that writes down where each outside connection was
+going and refuses it, so nothing leaves the machine. A client that ignores
+`HTTPS_PROXY` never reaches the catcher, so after every run the probe also
+reads the sandbox's own refusals of Qwen Code's process from the system log
+(`log show`).
 
 ```text
 qwen_probe.py · what Qwen Code 0.24.7 does around the model
-  stand-in model  http://127.0.0.1:58101/v1 on this machine: keeps every request, answers `head -3 data.csv`, `echo 42 > answer.txt`, then text
-  catcher         HTTPS_PROXY=http://127.0.0.1:58102: writes down each outside connection asked for and refuses it
+  stand-in model  http://127.0.0.1:52050/v1 on this machine: keeps every request, answers `head -3 data.csv`, `echo 42 > answer.txt`, then text
+  catcher         HTTPS_PROXY=http://127.0.0.1:52051: writes down each outside connection asked for and refuses it
   every run       inside chapter 19's sandbox, a private HOME
 
 ━━ 1. its own switches left on
   exit           0
   outside connections asked for: 2
     gb4w8c3ygj-default-sea.rum.aliyuncs.com:443 (refused by the catcher)
+  sandbox        refused 0 direct connections (its own log)
 
-━━ 2. with wire.py's switches
+━━ 2. its own switches left on, no HTTPS_PROXY: only the sandbox
   exit           0
-  outside connections asked for: 0
+  outside connections asked for: 0 (through HTTPS_PROXY only; a client that ignores it is stopped by the sandbox and not seen here)
+  sandbox        refused 2 direct connections (its own log)
 
-━━ 3. --bare (wire.py's setup)
+━━ 3. with wire.py's switches
+  exit           0
+  outside connections asked for: 0 (through HTTPS_PROXY only; a client that ignores it is stopped by the sandbox and not seen here)
+  sandbox        refused 0 direct connections (its own log)
+
+━━ 4. --bare (wire.py's setup)
   exit           0
   requests       3
   first request  25,387 characters: messages 14,840, tool descriptions 10,547
   tools offered  3: edit, read_file, run_shell_command
   max_tokens     32000 asked
+  sandbox        refused 0 direct connections (its own log)
 
-━━ 4. without --bare
+━━ 5. without --bare
   exit           0
   requests       4
   first request  52,510 characters: messages 24,692, tool descriptions 27,818
   tools offered  14: cron_create, cron_delete, cron_list, edit, glob, grep_search, loop_wakeup, monitor, read_file, read_mcp_resource, run_shell_command, web_fetch, write_file, zoom_image
   max_tokens     32000 asked
   request 4      26,820 characters, other tools (after the last reply): edit, glob, grep_search, read_file, write_file
+  sandbox        refused 0 direct connections (its own log)
 
-━━ 5. read_file excluded too
+━━ 6. read_file excluded too
   exit           0
   head -3 data.csv       refused: This "run_shell_command" invocation was denied by permission rules. Matching deny rule: "read_file".
   echo 42 > answer.txt   ran
   its log        result success · 3 turns · 1 refused by its permission rules
   answer.txt     '42'
+  sandbox        refused 0 direct connections (its own log)
 ```
 
 What each run shows:
@@ -260,24 +355,28 @@ What each run shows:
    asked twice for a connection to `gb4w8c3ygj-default-sea.rum.aliyuncs.com`
    on port 443. That is a host of Alibaba Cloud's real-user monitoring
    service (RUM), and the request is its usage statistics. In a normal run
-   that connection is made; here the catcher refused it, and the sandbox
-   would have refused it too.
-2. **Four switches stop it.** `wire.py` sets `QWEN_USAGE_STATISTICS_ENABLED`
+   that connection is made; here the catcher refused it.
+2. **The sandbox is the backstop.** With no `HTTPS_PROXY`, the same run went
+   straight for the internet, and the sandbox refused its process 2 direct
+   connections. The catcher saw none: it only sees clients that honour the
+   proxy setting.
+3. **Four switches stop it.** `wire.py` sets `QWEN_USAGE_STATISTICS_ENABLED`
    and `QWEN_TELEMETRY_ENABLED` to `false`, and `QWEN_CODE_DISABLE_PRECONNECT`
-   and `QWEN_DISABLE_AUTO_TITLE` to `1`. With them, the catcher saw nothing.
-3. **`--bare` is what fits the window.** It reads no settings file and offers
+   and `QWEN_DISABLE_AUTO_TITLE` to `1`. With them, the catcher saw no
+   connection through `HTTPS_PROXY` and the sandbox refused none directly.
+4. **`--bare` is what fits the window.** It reads no settings file and offers
    three tools; the first request is 25,387 characters. Because it reads no
    settings file, every request asks for 32,000 output tokens. The proxy
    (`--max-output-tokens 1024`, from `start.sh`) and `engine.py`
    (`cap = max(1, min(asked, MAX_COMPLETION_TOKENS))`, 1,024) cap every
    reply anyway. With the model, Qwen Code's longest reply was 1,006 tokens;
-   mini-swe-agent's replies stopped at exactly 1,024 four times
-   (`finish_reason` `length`, below).
-4. **Without `--bare`** it offers 14 tools, its first request is 52,510
+   mini-swe-agent's replies stopped at exactly 1,024 twice (`finish_reason`
+   `length`, below).
+5. **Without `--bare`** it offers 14 tools, its first request is 52,510
    characters, about twice as long, and it makes an extra request after the
    run's last reply, offering five other tools (a request of 26,820
    characters that no answer needs).
-5. **Excluding a tool also forbids the shell to do the same thing.** With
+6. **Excluding a tool also forbids the shell to do the same thing.** With
    `read_file` among the excluded tools, `head -3 data.csv` through
    `run_shell_command` was refused: `Matching deny rule: "read_file"`. So
    `wire.py` never excludes `read_file` or `edit`, only the agent and planning
@@ -299,7 +398,7 @@ calls     4 agent calls · 0 side calls · 0 answered by the proxy itself
 stop      a reply with no tool call: the harness's loop ends there
 its log   result success · 4 turns
 answer    answer.txt '18' · correct
-network   lsof every 0.1 s: 21 samples over 2.9 s · connections to 127.0.0.1:8239 (the proxy) only: loopback, nothing else
+network   lsof every 0.1 s (sampled; a refused connect is invisible to lsof): 23 samples over 3.1 s · connections to 127.0.0.1:8239 (the proxy) only: loopback, nothing else
 ```
 
 ```text
@@ -331,81 +430,84 @@ try_family.py · the untrained model on a new task family, in one harness
   engine    model at http://127.0.0.1:8169 (lfm2.5 tokens) · script: none
 version   2.4.6, asked inside the sandbox · pinned 2.4.6 · ok
 tasks
-[ 1/20] mini-swe-agent csv-s0-easy-01     correct · 5 calls  ·  15.3 s · finish command · answer '18'
-[ 2/20] mini-swe-agent csv-s0-easy-02     wrong   · 7 calls  ·  35.6 s · finish command · answer '0'
-[ 3/20] mini-swe-agent csv-s0-easy-03     correct · 6 calls  ·  19.3 s · finish command · answer '36'
-[ 4/20] mini-swe-agent csv-s0-easy-04     correct · 7 calls  ·  20.6 s · finish command · answer '120.0'
+[ 1/20] mini-swe-agent csv-s0-easy-01     correct · 5 calls  ·  16.5 s · finish command · answer '18'
+[ 2/20] mini-swe-agent csv-s0-easy-02     correct · 8 calls  ·  18.6 s · finish command · answer '13'
+[ 3/20] mini-swe-agent csv-s0-easy-03     correct · 6 calls  ·  20.1 s · finish command · answer '36'
+[ 4/20] mini-swe-agent csv-s0-easy-04     correct · 7 calls  ·  20.9 s · finish command · answer '120.0'
 [ 5/20] mini-swe-agent csv-s0-easy-05     correct · 8 calls  ·  20.1 s · step limit · answer '9'
 [ 6/20] mini-swe-agent csv-s0-easy-06     correct · 6 calls  ·  10.4 s · finish command · answer '40'
-[ 7/20] mini-swe-agent csv-s0-easy-07     correct · 7 calls  ·  14.8 s · finish command · answer '59'
-[ 8/20] mini-swe-agent csv-s0-medium-01   correct · 7 calls  ·  21.4 s · finish command · answer 'Office Chair'
-[ 9/20] mini-swe-agent csv-s0-medium-02   correct · 7 calls  ·  15.2 s · finish command · answer '12160.19'
-[10/20] mini-swe-agent csv-s0-medium-03   correct · 6 calls  ·  18.5 s · finish command · answer '4.555555555555555'
-[11/20] mini-swe-agent csv-s0-medium-04   correct · 7 calls  ·  17.8 s · finish command · answer 'Ben Ortiz'
-[12/20] mini-swe-agent csv-s0-medium-05   wrong   · 7 calls  ·  20.7 s · finish command · answer 'Office Chair'
-[13/20] mini-swe-agent csv-s0-medium-06   correct · 7 calls  ·  14.9 s · finish command · answer '5266.67'
-[14/20] mini-swe-agent csv-s0-medium-07   correct · 7 calls  ·  23.5 s · step limit · answer '2.6666666666666665'
-[15/20] mini-swe-agent csv-s0-hard-01     correct · 6 calls  ·  26.4 s · step limit · answer 'Ben Ortiz, Asha Rao, Chloe Martin'
-[16/20] mini-swe-agent csv-s0-hard-02     correct · 7 calls  ·  37.8 s · step limit · answer 'Farid Khan, Chloe Martin, Ben Ortiz, Dev Patel'
-[17/20] mini-swe-agent csv-s0-hard-03     correct · 7 calls  ·  17.9 s · step limit · answer '10'
-[18/20] mini-swe-agent csv-s0-hard-04     correct · 8 calls  ·  32.1 s · step limit · answer '359.91'
-[19/20] mini-swe-agent csv-s0-hard-05     correct · 7 calls  ·  18.8 s · finish command · answer 'Dev Patel, Ben Ortiz, Farid Khan, Asha Rao, Chloe Martin'
-[20/20] mini-swe-agent csv-s0-hard-06     wrong   · 7 calls  ·  66.4 s · step limit · answer none
+[ 7/20] mini-swe-agent csv-s0-easy-07     correct · 7 calls  ·  14.9 s · finish command · answer '59'
+[ 8/20] mini-swe-agent csv-s0-medium-01   correct · 7 calls  ·  22.1 s · finish command · answer 'Office Chair'
+[ 9/20] mini-swe-agent csv-s0-medium-02   correct · 7 calls  ·  16.3 s · finish command · answer '12160.19'
+[10/20] mini-swe-agent csv-s0-medium-03   correct · 6 calls  ·  19.1 s · finish command · answer '4.555555555555555'
+[11/20] mini-swe-agent csv-s0-medium-04   correct · 7 calls  ·  18.3 s · finish command · answer 'Ben Ortiz'
+[12/20] mini-swe-agent csv-s0-medium-05   wrong   · 7 calls  ·  21.1 s · finish command · answer 'Office Chair'
+[13/20] mini-swe-agent csv-s0-medium-06   correct · 7 calls  ·  15.4 s · finish command · answer '5266.67'
+[14/20] mini-swe-agent csv-s0-medium-07   correct · 7 calls  ·  24.3 s · step limit · answer '2.6666666666666665'
+[15/20] mini-swe-agent csv-s0-hard-01     correct · 6 calls  ·  27.0 s · step limit · answer 'Ben Ortiz, Asha Rao, Chloe Martin'
+[16/20] mini-swe-agent csv-s0-hard-02     correct · 8 calls  ·  22.3 s · step limit · answer 'Chloe Martin,Ben Ortiz,Farid Khan,Dev Patel'
+[17/20] mini-swe-agent csv-s0-hard-03     correct · 7 calls  ·  19.1 s · step limit · answer '10'
+[18/20] mini-swe-agent csv-s0-hard-04     correct · 7 calls  ·  51.0 s · step limit · answer '359.91'
+[19/20] mini-swe-agent csv-s0-hard-05     correct · 6 calls  ·  29.0 s · finish command · answer 'Dev Patel, Ben Ortiz, Farid Khan, Asha Rao, Chloe Martin'
+[20/20] mini-swe-agent csv-s0-hard-06     correct · 7 calls  ·  67.1 s · step limit · answer 'Ben Ortiz, Chloe Martin, Elena Rossi'
 
-score     17/20 = 85.0% · Wilson 95% 64.0% to 94.8% · calls per solve 6.8
-by level  easy 6/7 · medium 6/7 · hard 5/6
-power     to see +10 points from 85.0% at p < 0.05, 80% of the time: about 156 paired tasks (exact McNemar, with independent attempts); the 85.0% is itself measured on 20 tasks
-tasks     20 of 20 recorded · this run took 7 min 48 s
-network   every rollout: lsof saw only this machine's addresses
+score     19/20 = 95.0% · Wilson 95% 76.4% to 99.1% · calls per solve 6.8
+by level  easy 7/7 · medium 6/7 · hard 6/6
+power     no room for +10 points from 95.0%; the 95.0% is itself measured on 20 tasks
+tasks     20 of 20 recorded · this run took 7 min 54 s
+network   every rollout: lsof saw only this machine's addresses (sampled)
 ```
 
-- **17 of 20, and that is all 20 tasks can say.** The Wilson interval runs
-  from 64.0% to 94.8%. One task is 5 points.
+- **19 of 20, and that is all 20 tasks can say.** The Wilson interval runs
+  from 76.4% to 99.1%. One task is 5 points.
 - **The lenient grader at work.** `4.555555555555555` passed for `4.56` and
   `2.6666666666666665` for `2.67` (within 0.01); three lists came back in
-  another order and passed.
-- **Seven tasks ended on mini-swe-agent's step limit, six of them already
+  another order, one with no spaces after its commas, and passed.
+- **Seven tasks ended on mini-swe-agent's step limit, all seven already
   correct.** The model had written the right answer, and its steps ran out
   before the finishing command. The grade reads `answer.txt`, so they count.
-- **The power line could not use chapter 24's churn here.** From 85%, 31.5%
-  of tasks flipping would need more gains than the 15% still unsolved, so it
-  fell back to independent attempts and says so.
+- **No room for +10 points from 95%,** power.py's line says: there is no
+  room to measure a gain of that size on this family in this harness.
 
-The three wrong tasks, command by command, from mini-swe-agent's own
-trajectories (`26-measure.txt`), are mistakes a SQL question never invited:
+The one wrong task, from mini-swe-agent's own trajectory (`26-measure.txt`):
+in `csv-s0-medium-05` (expected `Photo Editor`), its revenue loop stored
+`revenue_by_product[product] = revenue`, each order replacing the last
+instead of adding to it, and it never kept only the Software category. It
+answered `Office Chair`, a Hardware product. Across the run's 154 replies,
+the longest was 1,024 tokens, and 2 were cut at that cap (`finish_reason`
+`length`, in `csv-s0-hard-04` and `csv-s0-hard-06`). The first prompt was
+537 to 550 tokens. The engine's peak memory was 3.17 GB, the weights included
+(chapter 24's SQL run: 2.90 to 3.24 GB). Every one of the run's 137 commands
+read `data.csv` or `answer.txt` and nothing else (`27-outside-grep.txt`).
+
+### Two runs, one model
+
+The first attempt (old box, commit `42d67db`) scored 17 of 20; this run
+scored 19. Read as chapter 24 taught, cell by cell: 2 gained
+(`csv-s0-easy-02`, `csv-s0-hard-06`), none lost, exact p = 0.500, within
+noise. The model, the prompts and the tasks were the same, and greedy
+decoding was used both times, so why did two cells flip? Both trajectories
+(`first-attempt/26-measure.txt` against `26-measure.txt`) are the same
+command for command until one output differs. In `csv-s0-easy-02` the
+model's own Python printed a set of regions, and the order differs:
 
 ```text
-━━ csv-s0-easy-02 · exit_status Submitted
-  $ python3 -c "
-    import csv
-    with open('data.csv', 'r') as f:
-        reader = csv.DictReader(f)
-        regions = set(row['region'] for row in reader)
-        print('Regions:', regions)
-        west_count = sum(1 for row in reader if row['region'] == 'West')
-        print('West count:', west_count)
-    "
-    > Regions: {'West', 'North', 'East', 'South'}
-    > West count: 0
+first attempt   Regions: {'West', 'North', 'East', 'South'}
+this run        Regions: {'South', 'West', 'North', 'East'}
 ```
 
-- **`csv-s0-easy-02`** (expected 13): a CSV reader can be read once. The
-  first loop used up every row, so the count over the same reader was 0.
-  The model printed the West rows one call later, then a reply ran into the
-  1,024-token cap, and it wrote `0`.
-- **`csv-s0-medium-05`** (expected `Photo Editor`): its revenue loop stored
-  `revenue_by_product[product] = revenue`, each order replacing the last
-  instead of adding to it, and never kept only the Software category. It
-  answered `Office Chair`, a Hardware product.
-- **`csv-s0-hard-06`** (expected three reps): the same used-up reader
-  (`All reps: []`), then two replies cut at the 1,024-token cap, and the
-  8 steps ran out with no answer.
-
-Across the run's 154 replies, the longest was 1,024 tokens, and 4 were cut
-at that cap (`finish_reason` `length`, in `csv-s0-easy-02`,
-`csv-s0-hard-02` and twice in `csv-s0-hard-06`). The first prompt was 537
-to 550 tokens. The engine's peak memory was 3.11 GB, the weights included
-(chapter 24's SQL run: 2.90 to 3.24 GB).
+In `csv-s0-hard-06` it printed its reps from a set the same way (`Ben Ortiz,
+Elena Rossi, Chloe Martin, ...` against `Ben Ortiz, Chloe Martin, Elena
+Rossi, ...`). Python orders a set of strings by their hashes, and every
+Python process picks a new hash seed. So the next prompt differed by a few
+tokens, and greedy decoding, which follows the likeliest token, took another
+path from there: in the first attempt a later reply ran into the
+1,024-token cap and the answer was lost (`0` in `easy-02`, none in
+`hard-06`); in this run it recounted and wrote the right one. A tool's output is part of the
+prompt, so even at temperature 0, a run that prints a set is not repeatable.
+The same `csv-s0-easy-02` trajectory shows the mistake the model made in
+both runs: a CSV reader can be read once, so its second count over the same
+reader was `West count: 0`.
 
 ### The fourth harness and the model
 
@@ -421,8 +523,8 @@ stop      a reply with no tool call: the harness's loop ends there
 its log   result success · 6 turns · 1 refused by its permission rules
   told    "write_file" is not listed in the active core tools allowlist (--core-tools or settings tools.core), so the tool is not available. Add it to the core tools list to re-enable it.
 answer    answer.txt '18' · correct
-exit      0 after 36.5 s
-network   lsof every 0.1 s: 259 samples over 36.5 s · connections to 127.0.0.1:8239 (the proxy) only: loopback, nothing else
+exit      0 after 42.4 s
+network   lsof every 0.1 s (sampled; a refused connect is invisible to lsof): 265 samples over 42.4 s · connections to 127.0.0.1:8239 (the proxy) only: loopback, nothing else
 ```
 
 Call by call (`26-measure.txt`): it read `data.csv` whole with `read_file`
@@ -430,9 +532,10 @@ Call by call (`26-measure.txt`): it read `data.csv` whole with `read_file`
 chapter 23's Pi overflowed the window on a binary database), counted with
 `grep -c "Chloe Martin"` (18), tried a `write_file` tool that `--bare` does
 not offer, wrote the answer with `echo` through its shell instead, read it
-back, and stopped. Correct in 6 calls; the last prompt was 10,155 tokens.
-The `lsof` watch took 259 samples and saw only the proxy. One task is a
-demonstration, not a measurement.
+back, and stopped: the same six calls, token for token, as in the first
+attempt. Correct in 6 calls; the last prompt was 10,155 tokens. The `lsof`
+watch took 265 samples and saw only the proxy; the box allowed no other port.
+One task is a demonstration, not a measurement.
 
 ## How many tasks: `power.py`
 
@@ -521,14 +624,17 @@ power.py · how many paired tasks before a gain can be told from noise
 | 'to see +10 points at p<0.05 you need about 150 paired tasks' | **261** at 80% power with chapter 24's churn (31.5% of tasks flipping); 78 if the new checkpoint only gains; 377 if attempts are independent (from 60%). 150 tasks give 54.4% power, and reach 80% only while at most 17.5% of tasks flip | `02-power` |
 | (what 24 tasks per harness can show) | a real +10 points shows up as p < 0.05 in 2.8% to 6.5% of 24-task comparisons | `02-power` |
 | a fourth harness wired only through its base URL and key | the connection is three variables (`OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_MODEL`). It also needed `--bare`, 14 tools excluded and 4 switches off, measured below | `04-wire`, `05-qwen-probe` |
-| (not in the plan) | with its own switches on, Qwen Code asked twice for `gb4w8c3ygj-default-sea.rum.aliyuncs.com:443`, Alibaba Cloud's usage monitoring; with `QWEN_USAGE_STATISTICS_ENABLED`, `QWEN_TELEMETRY_ENABLED`, `QWEN_CODE_DISABLE_PRECONNECT` and `QWEN_DISABLE_AUTO_TITLE` set, it asked for none | `05-qwen-probe` (runs 1 and 2) |
-| (not in the plan) | the model run's `lsof` watch: 259 samples over 36.5 s, connections to the proxy only; mini-swe-agent's 20 model rollouts, the same | `23-one-qwen-model`, `22-family-model` |
-| (not in the plan) | excluding `read_file` made Qwen Code refuse `head -3 data.csv` through its shell: `Matching deny rule: "read_file"`; so `read_file` and `edit` stay offered | `05-qwen-probe` (run 5) |
-| (not in the plan) | without `--bare`: 14 tools, a first request of 52,510 characters, and a fourth request after the last reply; with it: 3 tools and 25,387 characters | `05-qwen-probe` (runs 3 and 4) |
-| (not in the plan) | with `--bare` it reads no settings file and asks for 32,000 output tokens; the proxy and `engine.py` cap every reply at 1,024. Its longest reply with the model was 1,006 tokens; mini-swe-agent hit 1,024 four times | `05-qwen-probe` (run 3), `26-measure` |
+| (not in the plan) | with its own switches on, Qwen Code asked twice for `gb4w8c3ygj-default-sea.rum.aliyuncs.com:443`, Alibaba Cloud's usage monitoring; with no `HTTPS_PROXY`, the sandbox refused its process 2 direct connections; with `QWEN_USAGE_STATISTICS_ENABLED`, `QWEN_TELEMETRY_ENABLED`, `QWEN_CODE_DISABLE_PRECONNECT` and `QWEN_DISABLE_AUTO_TITLE` set, none through the catcher and none refused by the sandbox (a zero through the catcher covers clients that honour `HTTPS_PROXY` only, so the sandbox's log is read too) | `05-qwen-probe` (runs 1 to 3) |
+| (not in the plan) | the model runs' `lsof` watch: Qwen Code 265 samples over 42.4 s, connections to the proxy only; mini-swe-agent's 20 rollouts, the same. lsof samples, and a refused connect is invisible to it; the sandbox is what keeps the rest out | `23-one-qwen-model`, `22-family-model` |
+| (not in the plan) | excluding `read_file` made Qwen Code refuse `head -3 data.csv` through its shell: `Matching deny rule: "read_file"`; so `read_file` and `edit` stay offered | `05-qwen-probe` (run 6) |
+| (not in the plan) | without `--bare`: 14 tools, a first request of 52,510 characters, and a fourth request after the last reply; with it: 3 tools and 25,387 characters | `05-qwen-probe` (runs 4 and 5) |
+| (not in the plan) | with `--bare` it reads no settings file and asks for 32,000 output tokens; the proxy and `engine.py` cap every reply at 1,024. Its longest reply with the model was 1,006 tokens; mini-swe-agent hit 1,024 twice | `05-qwen-probe` (run 4), `26-measure` |
 | (not in the plan) | Qwen Code's first call: 5,678 LFM2.5 tokens, against 537 for mini-swe-agent | `08-one-qwen`, `09-one-mini` |
-| a new task family needs only data, a generator and a grader | it also needed mini-swe-agent's instance template rewritten (it named `sqlite3 data.db`), and the sandbox pointed at the new folder of gold answers (with chapter 24's default, `cat` read them inside the box) | `mini_swe_agent.yaml`, the tests |
-| generates 20 CSV tasks, runs the untrained model on them through the proxy in one harness, and prints the per-task results plus power.py's answer | 17 of 20 in mini-swe-agent (Wilson 95% 64.0% to 94.8%), 6.8 calls per solve, 7 min 48 s; per-task lines, the score and power.py's line (156 tasks from 85%, with independent attempts) | `22-family-model` |
+| a new task family needs only data, a generator and a grader | it also needed mini-swe-agent's instance template rewritten (it named `sqlite3 data.db`), and the sandbox pointed at the new folder of gold answers (with chapter 24's choice, `cat` read them inside the box) | `mini_swe_agent.yaml`, the tests |
+| (chapter 19's profile, kept since) | a rollout could read other rollouts' folders, where a scripted run's `answer.txt` and log hold the gold, the records, and this repository's generator; and reach every loopback port. Now refused, the rollout's own files and paths still working, the proxy's port alone open | `11-box-check`, the tests |
+| (not in the plan) | the first attempt's 20 cells, under the old box: 135 commands, all on `data.csv` or `answer.txt`; Qwen Code's 5 tool calls, all in its own task folder; under the fixed box, 137 commands, the same | `first-attempt/27-outside-grep`, `27-outside-grep` |
+| generates 20 CSV tasks, runs the untrained model on them through the proxy in one harness, and prints the per-task results plus power.py's answer | 19 of 20 in mini-swe-agent (Wilson 95% 76.4% to 99.1%), 6.8 calls per solve, 7 min 54 s, in the box as shipped; per-task lines, the score and power.py's line (no room for +10 points from 95%) | `22-family-model` |
+| (not in the plan) | the first attempt scored 17 of 20; against it, 2 gained, none lost, exact p = 0.500. Both flips start where the model's own Python printed a set, whose order changes with every process's hash seed: the next prompt differed, and greedy decoding took another path | `first-attempt/26-measure`, `26-measure` |
 | (review) using the pipeline yourself: a new family, another harness, what to re-measure | the family, Qwen Code, and the list below | this chapter |
 | (review) reading a paired checkpoint comparison: 62 -> 71 is 7 gained, 5 lost, p = 0.77 | 7 gained, 5 lost, exact p = 0.774; `try_family.py --against` reads two of your own runs the same way | `02-power`, the tests |
 | (review) a 60-second primer on vectors, matrices and rank | not in this chapter: chapter 10 defines vector and matrix, chapter 13 defines rank; the primer belongs there | `10-meet-lfm`, `13-lora` |
@@ -546,16 +652,21 @@ power.py · how many paired tasks before a gain can be told from noise
   queries, keep chapter 1's grader unless your answers have a new shape.
   Read every harness setting that describes the job (here, only
   mini-swe-agent's instance template). Point the sandbox at the folder of
-  gold answers, and check inside the box that it cannot be read.
+  gold answers, and check inside the box that neither it nor any other copy
+  of an answer can be read (`sandbox.py --workdir`): other rollouts'
+  folders, the run records, the code that makes the tasks.
 - **A new harness.** Pin its version. Wire it by the settings its own
   documentation gives for any provider. Then measure, before the model:
-  where it connects besides the model (`qwen_probe.py`'s catcher), what its
+  where it connects besides the model (`qwen_probe.py`'s catcher and the
+  sandbox's log), what its
   first call costs against the 16,384-token window (`run_one.py`'s `first`
   line), which tools it offers, and what its exclusions forbid.
 - **Measure again, one new thing at a time.** The untrained model on the
   new family, in a harness already measured. The new harness on a family
   already measured. Then `power.py` before you train: the number of tasks
-  your hoped-for gain needs, so a result is not read from too few.
+  your hoped-for gain needs, so a result is not read from too few. And print
+  sorted lists in your own tools: an unordered set changes the next prompt
+  from run to run, even at temperature 0.
 
 ## The files
 
@@ -565,14 +676,15 @@ with Python's own tokenizer:
 | file | lines | code | what it is |
 | --- | ---: | ---: | --- |
 | `power.py` | 868 | 428 | paired tasks for a gain: exact McNemar, the normal approximation past 2,000, a seeded check |
-| `try_family.py` | 555 | 341 | the family in one harness through the proxy: per-task results, Wilson, power, `--against` |
+| `try_family.py` | 570 | 355 | the family in one harness through the proxy: per-task results, Wilson, power, `--against` |
 | `make_csv_tasks.py` | 553 | 326 | chapter 1's seeded generator over the spreadsheet: 12 templates, the fairness rules |
-| `qwen_probe.py` | 548 | 315 | Qwen Code five ways against a stand-in model, outside connections caught |
+| `qwen_probe.py` | 651 | 380 | Qwen Code six ways against a stand-in model: outside connections caught, the sandbox's refusals read |
+| `sandbox.py`, `sandbox.sb` | 414, 139 | 207 | chapter 19's box with two rules added (other rollouts, records and the repo unreadable; one loopback port), and `--workdir` to try a command in it |
 | `sheet.py`, `tasks.py` | 130, 202 | 60, 80 | the spreadsheet read with types; the family's tasks, instruction and gold folder |
-| `run_one.py`, `wire.py`, `install.py` | 950, 691, 678 | 536, 406, 356 | chapter 24's, with Qwen Code added and the CSV solving script |
+| `run_one.py`, `wire.py`, `install.py` | 952, 703, 681 | 538, 415, 359 | chapter 24's, with Qwen Code added, the CSV solving script and the proxy's port for the box |
 | `mini_swe_agent.yaml` | 136 | | the project's mini-swe-agent config, its SQLite wording rewritten for a CSV file |
 | `data/sales.csv`, `data/chapter24_pairs.json` | 97, 14 | | the invented spreadsheet; chapter 24's nine checkpoint pairs |
-| `evaluate.py`, `stats.py`, `start.sh`, `engine.py`, `scripted_engine.py`, `capture_client.py`, `sandbox.py`, ... | | | chapter 24's, unchanged but for the folder name (`start.sh` adds `UV_NO_CONFIG=1`); `grader.py` is chapter 1's |
+| `evaluate.py`, `stats.py`, `start.sh`, `engine.py`, `scripted_engine.py`, `capture_client.py`, `loopback.py`, ... | | | chapter 24's, unchanged but for the folder name (`start.sh` adds `UV_NO_CONFIG=1`; `loopback.py` says its watch samples); `grader.py` is chapter 1's |
 
 ## What this chapter leaves out
 
