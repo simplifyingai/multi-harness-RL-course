@@ -19,7 +19,9 @@ applied, this module raises instead of falling back, and nothing runs.
 with every parameter the profile reads. ``uv run sandbox.py --workdir
 <task folder> -- <command>`` runs one command in the box a rollout in that
 folder would get, and prints its exit status and output: the way to check
-what the box lets a rollout see.
+what the box lets a rollout see. The folder must be a task folder under
+``COURSE_HOME/29-make-it-yours/runs/``, and the command can WRITE in it, as
+a rollout can.
 """
 
 from __future__ import annotations
@@ -66,6 +68,7 @@ SYSTEM_TMP_ON = "1"
 EXAMPLE_RUN = "example"
 EXAMPLE_FOLDERS = ("task", "state")  # where an example run would write
 TRY_TIMEOUT_S = 30
+TIMED_OUT = 124  # the exit status `timeout` uses
 
 # Secret-file patterns, appended to the escaped home folder:
 # .env, .envrc, name.env, each with optional suffixes (.env.local); not .venv.
@@ -213,8 +216,9 @@ def check_contents_root(path: Path, writable: Sequence[Path]) -> Path:
 
     Unlike ``check_hidden_root``, the folder may contain the task folder
     (``runs/`` does): only ``file-read-data`` is denied, so paths through it
-    still resolve, and the own folders are re-allowed after it. It may not
-    sit inside a writable folder, where reads are allowed again.
+    still resolve, and the own folders are left out of the rule. It may not
+    be a writable folder, or sit inside one: the whole root would then be
+    readable (and writable) again.
 
     Args:
         path: A folder whose file contents the profile denies.
@@ -224,13 +228,14 @@ def check_contents_root(path: Path, writable: Sequence[Path]) -> Path:
         The resolved path.
 
     Raises:
-        UnsafeSandboxPathError: If the folder sits inside a writable folder.
+        UnsafeSandboxPathError: If the folder is a writable folder or sits
+            inside one.
     """
     resolved = path.resolve()
     for folder in writable:
-        if resolved != folder and resolved.is_relative_to(folder):
+        if resolved.is_relative_to(folder):  # the same folder counts too
             raise UnsafeSandboxPathError(
-                f"{resolved} is inside {folder}, where reads are allowed again"
+                f"{resolved} is {folder} or inside it, where reads are allowed again"
             )
     return resolved
 
@@ -347,36 +352,73 @@ def sandbox_command(
     return [str(SANDBOX_EXEC), "-f", str(profile), *defines, *command]
 
 
+def check_try_folder(workdir: Path) -> Path:
+    """Refuse a folder to try a command in that is not one of the runs' task folders.
+
+    The command may write in the folder, as a rollout may, and the folder is
+    left out of the rule that hides other rollouts: so it must be a task
+    folder inside ``runs/``, never ``runs/`` itself, a records folder or this
+    repository.
+
+    Args:
+        workdir: The folder asked for.
+
+    Returns:
+        The resolved folder.
+
+    Raises:
+        UnsafeSandboxPathError: If it does not exist, or is not inside the
+            chapter's runs folder.
+    """
+    resolved = workdir.resolve()
+    if not resolved.is_dir():
+        raise UnsafeSandboxPathError(f"no such task folder: {workdir}")
+    runs = (chapter_home() / RUNS_FOLDER).resolve()
+    if resolved == runs or not resolved.is_relative_to(runs):
+        raise UnsafeSandboxPathError(
+            f"{short_path(resolved)} is not a task folder inside {short_path(runs)}; "
+            "the command could write there"
+        )
+    return resolved
+
+
 def try_in_box(workdir: Path, command: list[str], proxy_port: int) -> int:
     """Run one command in the box a rollout in ``workdir`` would get.
 
+    The command can write in ``workdir``, as a rollout can.
+
     Args:
-        workdir: An existing task folder.
+        workdir: An existing task folder inside the chapter's runs folder.
         command: The command and its arguments.
         proxy_port: The loopback port the box leaves open.
 
     Returns:
-        The command's exit status.
+        The command's exit status (124 when it timed out).
 
     Raises:
-        SandboxError: If the box cannot be applied.
+        SandboxError: If the folder is refused or the box cannot be applied.
     """
     home = str(Path.home())
+    folder = check_try_folder(workdir)
+    print(f"$ {shlex.join(command)}".replace(home, "~"))
+    print(f"  (in the box of {short_path(folder)})")
     with tempfile.TemporaryDirectory(prefix="mhrl-box-check-") as state:
         params = sandbox_params(
-            workdir=workdir, state_dir=Path(state), proxy_port=proxy_port
+            workdir=folder, state_dir=Path(state), proxy_port=proxy_port
         )
         argv = sandbox_command(command, params=params)
-        done = subprocess.run(
-            argv,
-            cwd=workdir,
-            capture_output=True,
-            text=True,
-            timeout=TRY_TIMEOUT_S,
-            check=False,
-        )
-    print(f"$ {shlex.join(command)}".replace(home, "~"))
-    print(f"  (in the box of {short_path(workdir.resolve())})")
+        try:
+            done = subprocess.run(
+                argv,
+                cwd=folder,
+                capture_output=True,
+                text=True,
+                timeout=TRY_TIMEOUT_S,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"  exit: timed out after {TRY_TIMEOUT_S} s")
+            return TIMED_OUT
     for line in (done.stdout + done.stderr).splitlines():
         print("  " + line.replace(home, "~"))
     print(f"  exit {done.returncode}")
@@ -394,7 +436,10 @@ def main() -> None:
     if args.workdir is not None:
         if not command:
             parser.error("--workdir needs a command after --")
-        try_in_box(args.workdir, command, args.proxy_port)
+        try:
+            try_in_box(args.workdir, command, args.proxy_port)
+        except SandboxError as error:
+            raise SystemExit(f"REFUSED · {error}") from error
         return
     example = chapter_home() / EXAMPLE_RUN
     workdir, state = (example / name for name in EXAMPLE_FOLDERS)

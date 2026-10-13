@@ -85,12 +85,14 @@ NO_PROXY = "127.0.0.1,localhost"  # the stand-in model is reached directly
 REFUSED = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
 RULE = "━━"
 # The sandbox's own log of what it refused (macOS's unified log).
-LOG_COMMAND = ("/usr/bin/log", "show", "--style", "compact", "--start")
-LOG_PREDICATE = 'sender == "Sandbox" AND eventMessage CONTAINS "network-outbound"'
+LOG_COMMAND = ("/usr/bin/log", "show", "--style", "compact")
+LOG_PREDICATE = 'sender == "Sandbox"'  # every line, to tell an empty log apart
 LOG_TIMEOUT_S = 60
 LOG_DELAY_S = 1.0  # the log takes a moment to hold the last refusals
 LOG_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
-DENY_RE = r"Sandbox: [^(]+\({pid}\) deny\(\d+\) network-outbound"
+# One refusal: "Sandbox: node(4242) deny(1) network-outbound <what>".
+DENY_RE = re.compile(r"Sandbox: [^(]+\((\d+)\) deny\(\d+\) network-outbound (\S+)")
+CLOCK_FORMAT = "%H:%M:%S"
 PROBE_KEY = "probe-key"  # the stand-in model takes any key
 SWITCH_RUNS = ("1-", "2-", "3-")  # the runs read for outside connections
 INCOMPLETE = "run did not complete: 0 means unobserved"
@@ -99,6 +101,32 @@ PROXY_ONLY = (
     "sandbox and not seen here)"
 )
 HTTP_OK = 200
+
+
+@dataclass(frozen=True)
+class Refusals:
+    """What the sandbox's own log says about one run's window.
+
+    Attributes:
+        own: Outbound attempts (DNS lookups or connects) it refused the
+            harness's own process.
+        total: The same, refused any sandboxed process in the window (the
+            box's commands, and anything else sandboxed on the machine).
+        targets: What each refused attempt was for, such as
+            ``/private/var/run/mDNSResponder`` (a DNS lookup) or
+            ``remote:*:443``, with how often.
+        lines: Sandbox lines of any kind in the window, so an empty or
+            lagging log is never read as a clean run.
+        start: The window's start.
+        end: The window's end.
+    """
+
+    own: int
+    total: int
+    targets: dict[str, int]
+    lines: int
+    start: datetime
+    end: datetime
 
 
 @dataclass(frozen=True)
@@ -150,8 +178,8 @@ class Probe:
         exit_code: Qwen Code's exit status (None when the time limit hit).
         log: Its stream-json log.
         answered: What ``answer.txt`` holds after the run, or None.
-        refused: Direct connections the sandbox refused its process, from
-            the system log (None when the log could not be read).
+        refused: The sandbox's refusals in the run's window, from the
+            system log (None when the log could not be read).
     """
 
     name: str
@@ -160,7 +188,7 @@ class Probe:
     exit_code: int | None = None
     log: Path = Path()
     answered: str | None = None
-    refused: int | None = None
+    refused: Refusals | None = None
 
 
 def reply_for(index: int) -> dict[str, Any]:
@@ -367,30 +395,32 @@ def run_once(
         exit_code=exit_code,
         log=log,
         answered=answer.read_text().strip() if answer.is_file() else None,
-        refused=sandbox_refusals(process.pid, since),
+        refused=sandbox_refusals(process.pid, since, datetime.now()),
     )
 
 
-def sandbox_refusals(pid: int, since: datetime) -> int | None:
-    """Count the outbound connections the sandbox refused one process.
+def sandbox_refusals(pid: int, since: datetime, until: datetime) -> Refusals | None:
+    """Read the sandbox's refusals in one run's window from the system log.
 
     A client that ignores ``HTTPS_PROXY`` never reaches the catcher; the
-    sandbox refuses its connect, and says so in the system log.
+    sandbox refuses its DNS lookup or connect, and says so in the log. Every
+    refusal in the window is counted, not only the harness's own process:
+    a command it starts (bash, curl) has a pid of its own.
 
     Args:
-        pid: The process.
-        since: When its run started.
+        pid: The harness's own process.
+        since: When the run started.
+        until: When it ended (and the log had a moment to catch up).
 
     Returns:
-        How many refusals the log holds for it, or None when the log could
-        not be read.
+        The refusals, or None when the log could not be read.
     """
     command = [
         *LOG_COMMAND,
-        since.strftime(LOG_TIME_FORMAT),
-        "--predicate",
-        LOG_PREDICATE,
-    ]
+        "--start", since.strftime(LOG_TIME_FORMAT),
+        "--end", until.strftime(LOG_TIME_FORMAT),
+        "--predicate", LOG_PREDICATE,
+    ]  # fmt: skip
     try:
         found = subprocess.run(
             command, capture_output=True, text=True, timeout=LOG_TIMEOUT_S, check=False
@@ -399,7 +429,18 @@ def sandbox_refusals(pid: int, since: datetime) -> int | None:
         return None
     if found.returncode != 0:
         return None
-    return len(re.findall(DENY_RE.format(pid=pid), found.stdout))
+    denials = DENY_RE.findall(found.stdout)
+    targets: dict[str, int] = {}
+    for _, target in denials:
+        targets[target] = targets.get(target, 0) + 1
+    return Refusals(
+        own=sum(found_pid == str(pid) for found_pid, _ in denials),
+        total=len(denials),
+        targets=targets,
+        lines=sum("Sandbox:" in line for line in found.stdout.splitlines()),
+        start=since,
+        end=until,
+    )
 
 
 def fresh_folders(root: Path, name: str) -> RunFolders:
@@ -509,17 +550,33 @@ def outside_lines(probe: Probe) -> list[str]:
 
 
 def sandbox_line(probe: Probe) -> str:
-    """Say how many direct connections the sandbox refused the run.
+    """Say what the sandbox refused in the run's window, from its own log.
 
     Args:
         probe: The run.
 
     Returns:
-        One line.
+        One line; a zero names the window and how many sandbox lines the log
+        held at all, so an empty or lagging log cannot pass as a clean run.
     """
-    if probe.refused is None:
+    refused = probe.refused
+    if refused is None:
         return "  sandbox        log unreadable"
-    return f"  sandbox        refused {probe.refused} direct connections (its own log)"
+    if not refused.total:
+        start, end = (
+            moment.strftime(CLOCK_FORMAT) for moment in (refused.start, refused.end)
+        )
+        window = f"{start}–{end}"
+        return (
+            "  sandbox        refused 0 attempts (DNS or connect) (log read, window "
+            f"{window}, {refused.lines} sandbox lines of any kind)"
+        )
+    what = ", ".join(f"{target} ×{n}" for target, n in sorted(refused.targets.items()))
+    return (
+        f"  sandbox        refused attempts (DNS or connect): {refused.own} by the "
+        f"harness process, {refused.total} by any sandboxed process in the window "
+        f"(its own log): {what}"
+    )
 
 
 def request_lines(probe: Probe) -> list[str]:

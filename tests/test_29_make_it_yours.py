@@ -28,6 +28,7 @@ import threading
 import time
 from collections import Counter
 from collections.abc import Iterator
+from datetime import datetime
 from itertools import product
 from pathlib import Path
 from typing import Any
@@ -647,6 +648,32 @@ def test_a_contents_rule_may_hold_the_task_folder_but_not_sit_inside_it(
     )
     with pytest.raises(sandbox.UnsafeSandboxPathError, match="inside"):
         sandbox.check_contents_root(task / "deeper", [task.resolve()])
+    # The root itself as a writable folder would open it whole.
+    runs = (tmp_path / "runs").resolve()
+    with pytest.raises(sandbox.UnsafeSandboxPathError, match="inside"):
+        sandbox.check_contents_root(tmp_path / "runs", [runs])
+    with pytest.raises(sandbox.UnsafeSandboxPathError):
+        sandbox.sandbox_params(workdir=sandbox.REPO_DIR, state_dir=tmp_path)
+
+
+def test_only_a_task_folder_in_runs_may_be_tried(
+    course_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    runs = course_home / "29-make-it-yours" / sandbox.RUNS_FOLDER
+    task = runs / "x" / "task"
+    task.mkdir(parents=True)
+    for folder, why in (
+        (tmp_path / "missing", "no such task folder"),
+        (runs, "not a task folder"),
+        (tmp_path, "not a task folder"),
+        (sandbox.REPO_DIR, "not a task folder"),
+    ):
+        with pytest.raises(sandbox.UnsafeSandboxPathError, match=why):
+            sandbox.check_try_folder(folder)
+    if sandbox.SANDBOX_EXEC.exists():
+        monkeypatch.setattr(sandbox, "TRY_TIMEOUT_S", 1)
+        assert sandbox.try_in_box(task, ["/bin/sleep", "5"], 8239) == 124
+        assert "exit: timed out after 1 s" in capsys.readouterr().out
 
 
 # ------------------------------------------------- qwen_probe.py
@@ -715,15 +742,46 @@ def test_the_probe_reads_requests_and_outside_connections() -> None:
     ]
 
 
+def refusals(own: int, total: int, lines: int, **targets: int) -> Any:
+    """A window of the sandbox's log.
+
+    Args:
+        own: Refusals of the harness's process.
+        total: Refusals of any process.
+        lines: Sandbox lines of any kind.
+        **targets: Refused targets and their counts.
+
+    Returns:
+        The refusals, in a window from 01:36:00 to 01:36:20.
+    """
+    return qwen_probe.Refusals(
+        own=own,
+        total=total,
+        targets=targets,
+        lines=lines,
+        start=datetime(2026, 10, 14, 1, 36, 0),
+        end=datetime(2026, 10, 14, 1, 36, 20),
+    )
+
+
 def test_a_zero_says_what_it_could_and_could_not_see() -> None:
     body = {"messages": [], "tools": []}
-    quiet = qwen_probe.Probe(name="q", requests=[body], exit_code=0, refused=1)
+    quiet = qwen_probe.Probe(
+        name="q", requests=[body], exit_code=0, refused=refusals(0, 0, 7)
+    )
     assert qwen_probe.outside_lines(quiet) == [
         "  outside connections asked for: 0 (through HTTPS_PROXY only; a client "
         "that ignores it is stopped by the sandbox and not seen here)"
     ]
-    assert qwen_probe.sandbox_line(quiet).endswith(
-        "refused 1 direct connections (its own log)"
+    assert qwen_probe.sandbox_line(quiet) == (
+        "  sandbox        refused 0 attempts (DNS or connect) (log read, window "
+        "01:36:00–01:36:20, 7 sandbox lines of any kind)"
+    )
+    loud = qwen_probe.Probe(name="l", refused=refusals(1, 3, 9, mdns=2, web=1))
+    assert qwen_probe.sandbox_line(loud) == (
+        "  sandbox        refused attempts (DNS or connect): 1 by the harness "
+        "process, 3 by any sandboxed process in the window (its own log): "
+        "mdns ×2, web ×1"
     )
     for broken in (
         qwen_probe.Probe(name="b", requests=[body], exit_code=1),
@@ -736,15 +794,32 @@ def test_a_zero_says_what_it_could_and_could_not_see() -> None:
     )
 
 
-def test_the_sandbox_log_is_counted_for_the_harness_process_only() -> None:
+def test_every_refusal_in_the_window_is_counted_not_only_the_harness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     text = (
-        "2026-10-14 01:36:58.899 E  kernel[0:1] Sandbox: node(4242) deny(1) "
-        "network-outbound remote:*:443\n"
-        "2026-10-14 01:36:59.000 E  kernel[0:1] Sandbox: curl(99) deny(1) "
+        "2026-10-14 01:36:01.0 E  kernel[0:1] Sandbox: node(4242) deny(1) "
+        "network-outbound /private/var/run/mDNSResponder\n"
+        "2026-10-14 01:36:02.0 E  kernel[0:1] Sandbox: curl(99) deny(1) "
+        "network-outbound /private/var/run/mDNSResponder\n"
+        "2026-10-14 01:36:03.0 E  kernel[0:1] Sandbox: curl(99) deny(1) "
         "network-outbound remote:*:80\n"
+        "2026-10-14 01:36:04.0 E  kernel[0:1] Sandbox: node(4242) deny(1) "
+        "file-read-data /x\n"
     )
-    pattern = qwen_probe.DENY_RE.format(pid=4242)
-    assert len(re.findall(pattern, text)) == 1
+    answer = subprocess.CompletedProcess([], 0, stdout=text, stderr="")
+    monkeypatch.setattr(qwen_probe.subprocess, "run", lambda *a, **k: answer)
+    start, end = datetime(2026, 10, 14, 1, 36), datetime(2026, 10, 14, 1, 37)
+    found = qwen_probe.sandbox_refusals(4242, start, end)
+    assert found is not None
+    assert (found.own, found.total, found.lines) == (1, 3, 4)
+    assert found.targets == {"/private/var/run/mDNSResponder": 2, "remote:*:80": 1}
+    # A pid with no line is 0 of its own, never a clean window.
+    other = qwen_probe.sandbox_refusals(1, start, end)
+    assert other is not None and (other.own, other.total) == (0, 3)
+    failed = subprocess.CompletedProcess([], 1, stdout="", stderr="no")
+    monkeypatch.setattr(qwen_probe.subprocess, "run", lambda *a, **k: failed)
+    assert qwen_probe.sandbox_refusals(4242, start, end) is None
 
 
 # ------------------------------------------------- power.py
