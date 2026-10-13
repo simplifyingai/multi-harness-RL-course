@@ -1,0 +1,106 @@
+(version 1)
+
+;; The box for one rollout (macOS sandbox-exec / Seatbelt).
+;;
+;; This is the multi-harness-rl project's profile (configs/harnesses/sandbox.sb),
+;; with its rules unchanged, copied from chapter 19; only the folders it is
+;; given differ (this chapter keeps everything under COURSE_HOME/25-sft-in-harnesses).
+;; Claude Code runs bash for the model on your laptop, so every run is in this box.
+;; Everything is allowed EXCEPT:
+;;
+;;   * file writes outside the rollout's own folders,
+;;   * reading credentials (ssh/cloud/gh keys, .netrc, Claude Code's login,
+;;     any .env file under your home outside the task folder),
+;;   * reading the task files that hold the gold answers,
+;;   * asking the keychain for anything, and
+;;   * outbound network to anything but the loopback interface.
+;;
+;; Parameters (sandbox.py passes each with -D NAME=VALUE). Paths must be REAL
+;; paths: /tmp and /var are links into /private on macOS, and Seatbelt matches
+;; the resolved path, so a rule written for /tmp would never match.
+;;
+;;   WORKDIR             the task folder the command runs in
+;;   STATE_DIR           the rollout's private HOME and TMPDIR
+;;   HOME_DIR            your REAL home (the command gets a fake HOME)
+;;   ENV_FILE_REGEX      matches .env / .env.* files anywhere under HOME_DIR
+;;   CLAUDE_JSON_REGEX   matches HOME_DIR/.claude.json (and its backups)
+;;   CLAUDE_CREDS_REGEX  matches HOME_DIR/.claude/.credentials*
+;;   TASKS_DIR           the folder holding the task records (gold answers)
+;;   SYSTEM_TMP          optional; "1" also makes the shared system temp dirs
+;;                       writable. Off by default: rollouts run side by side,
+;;                       and a model that writes to a guessed absolute /tmp
+;;                       path can land in ANOTHER rollout's folder (the
+;;                       project saw Pi write answer.txt two directories above
+;;                       its own workdir). Every rollout gets a private TMPDIR
+;;                       inside STATE_DIR instead.
+;;
+;; Seatbelt applies the LAST rule that matches, so the order below matters.
+
+;; Start permissive: harnesses are large programs (Node, Bun, Python) that
+;; read all over the system, spawn shells and talk to system daemons.
+(allow default)
+
+;; ---------------------------------------------------------------- writes
+;; Only the task folder, the private state folder and /dev (null, tty, fd).
+;; Not your home, not this repository, not ~/.claude.
+(deny file-write*)
+(allow file-write*
+    (subpath (param "WORKDIR"))
+    (subpath (param "STATE_DIR"))
+    (subpath "/dev"))
+
+(if (equal? (param "SYSTEM_TMP") "1")
+    (allow file-write*
+        (subpath "/private/tmp")
+        (subpath "/private/var/tmp")
+        (subpath "/private/var/folders")))
+
+;; ---------------------------------------------------------------- secrets
+;; Reads stay open (programs, libraries, system files), except credentials.
+;; file-read* also covers stat, so `test -e` says these do not exist.
+(deny file-read*
+    (subpath (string-append (param "HOME_DIR") "/.ssh"))
+    (subpath (string-append (param "HOME_DIR") "/.aws"))
+    (subpath (string-append (param "HOME_DIR") "/.config/gh"))
+    (subpath (string-append (param "HOME_DIR") "/.config/gcloud"))
+    (subpath (string-append (param "HOME_DIR") "/.azure"))
+    (subpath (string-append (param "HOME_DIR") "/.gnupg"))
+    (subpath (string-append (param "HOME_DIR") "/.docker"))
+    (subpath (string-append (param "HOME_DIR") "/.kube"))
+    (subpath (string-append (param "HOME_DIR") "/Library/Keychains"))
+    (literal (string-append (param "HOME_DIR") "/.netrc"))
+    (literal (string-append (param "HOME_DIR") "/.npmrc"))
+    (literal (string-append (param "HOME_DIR") "/.pypirc"))
+    (literal (string-append (param "HOME_DIR") "/.git-credentials"))
+    (literal (string-append (param "HOME_DIR") "/.cache/huggingface/token"))
+    (literal (string-append (param "HOME_DIR") "/.huggingface/token"))
+    (regex (param "CLAUDE_JSON_REGEX"))
+    (regex (param "CLAUDE_CREDS_REGEX"))
+    (regex (param "ENV_FILE_REGEX")))
+
+;; ---------------------------------------------------------------- answers
+;; The task files hold the gold answers: reading them would be reward
+;; hacking, and RL is good at finding shortcuts. TASKS_DIR is never an
+;; ancestor of a task folder (sandbox.py checks), so denying it whole costs
+;; nothing. (A first version also denied the folder holding every rollout:
+;; that broke the tools that resolve paths through the task folder's parent
+;; folders. sandbox_v1.sb keeps it, for the demo.)
+(deny file-read*
+    (subpath (param "TASKS_DIR")))
+
+;; ...but the rollout's own folders stay fully readable, .env files included.
+(allow file-read*
+    (subpath (param "WORKDIR"))
+    (subpath (param "STATE_DIR")))
+
+;; The login keychain is unlocked while you are logged in, and Claude Code
+;; keeps its login token there, so `security find-generic-password -w` could
+;; print it. Nothing in the box needs the keychain.
+(deny mach-lookup (global-name "com.apple.SecurityServer"))
+
+;; ---------------------------------------------------------------- network
+;; Outbound only to loopback, where the course's local servers listen. DNS
+;; (mDNSResponder's unix socket) is outbound too, so external names do not
+;; even resolve, and a connect() to an external address fails.
+(deny network-outbound)
+(allow network-outbound (remote ip "localhost:*"))
