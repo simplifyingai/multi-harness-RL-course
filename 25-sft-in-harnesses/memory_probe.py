@@ -100,9 +100,8 @@ RESULTS_FILE = "results.json"
 ENGINE_PID = Path("run") / "engine.pid"  # start.sh's record of the engine
 COMMAND_SUFFIX = ".cmd"  # ...and of the command it started (run/engine.cmd)
 PS = "/bin/ps"
-VM_STAT = "/usr/bin/vm_stat"
-PAGE_SIZE_RE = re.compile(r"page size of (\d+) bytes")
-FREE_KINDS = ("Pages free", "Pages inactive", "Pages speculative", "Pages purgeable")
+MEMORY_PRESSURE = "/usr/bin/memory_pressure"  # macOS's own count of free memory
+FREE_PERCENT_RE = re.compile(r"memory free percentage: (\d+)%")
 NAME_COLUMN = 12
 CELL_COLUMN = 9
 NO_MEASUREMENT = "before any pass: a generous count of the arrays it makes"
@@ -398,33 +397,34 @@ def recorded_for(setting: Setting, length: int) -> float | None:
 
 
 def free_bytes(read: Callable[[], str] | None = None) -> float | None:
-    """What the machine has free now: free, inactive, speculative and purgeable pages.
+    """What the machine has free now, as macOS itself counts it.
+
+    ``memory_pressure``'s "System-wide memory free percentage", times the
+    machine's memory. Not vm_stat's free and inactive pages: they leave out
+    what macOS compresses or hands back on demand. In this chapter's first
+    run they added up to 3.9 GB while macOS reported 58% free, and the probe
+    refused every row.
 
     Args:
-        read: Returns ``vm_stat``'s output (the tests give their own).
+        read: Returns ``memory_pressure``'s output (the tests give their own).
 
     Returns:
-        Bytes, or None when ``vm_stat`` cannot be read (not a Mac).
+        Bytes, or None when it cannot be read (not a Mac).
     """
     try:
         text = (
             read()
             if read
             else subprocess.run(
-                [VM_STAT], capture_output=True, text=True, check=True
+                [MEMORY_PRESSURE], capture_output=True, text=True, check=True
             ).stdout
         )
     except (OSError, subprocess.CalledProcessError):
         return None
-    size = PAGE_SIZE_RE.search(text)
-    if not size:
+    found = FREE_PERCENT_RE.search(text)
+    if not found:
         return None
-    pages = 0
-    for line in text.splitlines():
-        name, _, value = line.partition(":")
-        if name.strip() in FREE_KINDS:
-            pages += int(value.strip().rstrip("."))
-    return float(pages * int(size.group(1)))
+    return int(found.group(1)) / PERCENT * machine_bytes()
 
 
 def machine_bytes() -> float:

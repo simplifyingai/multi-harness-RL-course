@@ -504,17 +504,15 @@ def test_the_projects_figures_label_the_cells_it_measured() -> None:
     assert memory_probe.recorded_for(by["full-logits"], 6144) is None
 
 
-def test_free_memory_is_read_from_vm_stat() -> None:
+def test_free_memory_is_macos_own_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(memory_probe, "machine_bytes", lambda: 20 * GB)
     text = (
-        "Mach Virtual Memory Statistics: (page size of 16384 bytes)\n"
-        "Pages free:                                     100.\n"
-        "Pages active:                                  9999.\n"
-        "Pages inactive:                                 200.\n"
-        "Pages speculative:                               50.\n"
-        "Pages purgeable:                                 10.\n"
+        "The system has 19327352832 (1179648 pages with a page size of 16384).\n"
+        "...\n"
+        "System-wide memory free percentage: 58%\n"
     )
-    assert memory_probe.free_bytes(lambda: text) == 360 * 16384
-    assert memory_probe.free_bytes(lambda: "no page size here") is None
+    assert memory_probe.free_bytes(lambda: text) == pytest.approx(11.6 * GB)
+    assert memory_probe.free_bytes(lambda: "no percentage here") is None
 
 
 def test_the_engine_is_found_by_its_pid_file_only(tmp_path: Path) -> None:
