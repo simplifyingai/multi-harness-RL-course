@@ -403,19 +403,26 @@ def waiter(command: str | None) -> Callable[[], None] | None:
         command: The shell command, or None for no hook.
 
     Returns:
-        The hook, or None.
+        The hook, or None. The hook raises ``SystemExit`` when the command
+        exits with a status other than 0.
     """
     if command is None:
         return None
 
     def wait() -> None:
+        """Run the command, wait for it, and stop the run if it says so.
+
+        Raises:
+            SystemExit: If the command exits with a status other than 0.
+        """
         started = time.perf_counter()
         # A command line the learner typed, run as typed: a shell is the point.
         status = subprocess.run(command, shell=True, check=False).returncode
-        waited = time.perf_counter() - started
-        if waited >= PAUSE_SHOWN_S:
-            minutes, rest = divmod(round(waited), SECONDS_PER_MINUTE)
-            print(f"  paused {minutes} min {rest} s for --before-cell", flush=True)
+        elapsed = time.perf_counter() - started
+        if elapsed >= PAUSE_SHOWN_S:
+            minutes, rest = divmod(round(elapsed), SECONDS_PER_MINUTE)
+            took = f"{minutes} min {rest} s" if minutes else f"{rest} s"
+            print(f"  paused {took} for --before-cell", flush=True)
         if status != 0:
             raise SystemExit(
                 f"--before-cell exited {status}: stopped before the next cell; "

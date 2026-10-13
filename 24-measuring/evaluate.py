@@ -51,7 +51,7 @@ from run_one import (
     save_run,
 )
 from tasks import ANSWER_FILE, Task, task_instruction
-from wire import Options, RunFolders, wire
+from wire import Options, RunFolders, Wiring, wire
 
 PERCENT = 100.0
 LABEL_WIDTH = 12  # the project's label column
@@ -61,9 +61,9 @@ CALLS_COLUMN = 8  # "8 calls"
 STATE_PREFIX = "mhrl-harness-"  # the project's mkdtemp prefix (mhrl/harnesses/base.py)
 STRAY_SHOWN = 60  # characters of a misplaced answer kept in the record
 # Claude Code's auto-memory folder is <state>/claude/projects/<the cwd spelt
-# as one name>/memory/. That name holds your user name, so it is shown as
-# <folder>.
-CLAUDE_PROJECTS = ("claude", "projects")
+# as one name, such as -Users-you-...>/memory/. That name holds your user
+# name, so it is shown as <folder>.
+CWD_NAME_START = "-"
 PROJECT_FOLDER = "<folder>"
 EVAL_FOLDER = "eval"  # COURSE_HOME/24-measuring/runs/eval/<label>/<harness>/<task>
 # What ended a run, in two or three words, from run_one's longer sentence.
@@ -431,10 +431,15 @@ def prepare_cell(label: str, harness: str, task: Task) -> RunFolders:
         The cell's folders, both empty but for ``data.db``.
     """
     beside = prepare_run(cell_folder(label, harness, task), task)
-    shutil.rmtree(beside.state)  # run_one makes one beside the task folder
+    # run_one makes a state folder beside the task folder: not used here.
+    shutil.rmtree(beside.state, ignore_errors=True)
     state = Path(tempfile.mkdtemp(prefix=f"{STATE_PREFIX}{harness}-")).resolve()
     folders = RunFolders(task=beside.task, state=state)
-    folders.make()
+    try:
+        folders.make()
+    except OSError:
+        shutil.rmtree(state, ignore_errors=True)  # never leave it behind
+        raise
     return folders
 
 
@@ -450,16 +455,21 @@ def stray_answer(state: Path) -> str | None:
 
     Returns:
         Such as ``'7' in claude/projects/<folder>/memory/answer.txt``, or
-        None when there is no such file.
+        None when there is no such file. A folder named after the cwd
+        (Claude Code's ``-Users-<you>-...``) or holding your user name is
+        written ``<folder>``, and your home folder ``~``.
     """
+    user = Path.home().name
     for path in sorted(state.rglob(ANSWER_FILE)):
-        if not path.is_file():
+        # A link could point anywhere; only a file the harness wrote counts.
+        if path.is_symlink() or not path.is_file():
             continue
         text = path.read_text(encoding="utf-8", errors="replace").strip()
-        parts = list(path.relative_to(state).parts)
-        if parts[: len(CLAUDE_PROJECTS)] == list(CLAUDE_PROJECTS) and len(parts) > 2:
-            parts[len(CLAUDE_PROJECTS)] = PROJECT_FOLDER  # it spells the cwd
-        return f"{text[:STRAY_SHOWN]!r} in {'/'.join(parts)}"
+        parts = [
+            PROJECT_FOLDER if part.startswith(CWD_NAME_START) or user in part else part
+            for part in path.relative_to(state).parts
+        ]
+        return tilde(f"{text[:STRAY_SHOWN]!r} in {'/'.join(parts)}")
     return None
 
 
@@ -499,6 +509,7 @@ def run_in(folders: RunFolders, task: Task, harness: str, setup: CellSetup) -> R
     """
     labels = {"task_id": task.task_id, "harness": harness}
     session = setup.client.open_session(PURPOSE_EVAL, labels, MAX_CALLS)
+    wiring: Wiring | None = None
     try:
         queue_script(setup.script, harness, task, setup.engine_url)
         wiring = wire(
@@ -515,7 +526,8 @@ def run_in(folders: RunFolders, task: Task, harness: str, setup: CellSetup) -> R
         document = setup.client.rollout(session.session_id)
     finally:
         setup.client.close(session.session_id)  # on every way out
-    log = keep_log(own_log(wiring, folders), folders)
+        if wiring is not None:  # the harness's own log, even when the run failed
+            log = keep_log(own_log(wiring, folders), folders)
     facts = read_facts(harness, document, log, process)
     turns = [t for t in document.get("turns") or [] if not t.get("discarded")]
     record = Record(
@@ -563,9 +575,9 @@ def cell_line(index: int, total: int, record: Record) -> str:
     verdict = "correct" if record.correct else "wrong  "
     answer = "none" if record.submitted is None else tilde(repr(record.submitted))
     calls = f"{record.n_calls} call" + ("" if record.n_calls == 1 else "s")
-    elsewhere = " · an answer.txt outside the task folder" * bool(
-        record.answer_elsewhere
-    )
+    elsewhere = " · an answer.txt outside the task folder"
+    if not record.answer_elsewhere:
+        elsewhere = ""
     return (
         f"[{index:>{width}}/{total}] {record.harness:<{HARNESS_COLUMN}} "
         f"{record.task_id:<{TASK_COLUMN}} {verdict} · {calls:<{CALLS_COLUMN}} · "

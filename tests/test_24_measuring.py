@@ -28,6 +28,7 @@ import time
 from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -478,13 +479,12 @@ def test_before_cell_runs_before_each_cell_that_runs(
     course_home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     order: list[str] = []
-    monkeypatch.setattr(
-        evaluate,
-        "run_rollout",
-        lambda task, harness, setup: (
-            order.append(task.task_id) or record(task.task_id, harness, True)
-        ),
-    )
+
+    def run(task: tasks.Task, harness: str, setup: Any) -> evaluate.Record:
+        order.append(task.task_id)
+        return record(task.task_id, harness, True)
+
+    monkeypatch.setattr(evaluate, "run_rollout", run)
     picked = evaluate.balanced(EVERY, 3)
     done = [("pi", picked[0].task_id)]
     evaluate.evaluate(
@@ -507,7 +507,7 @@ def test_the_before_cell_command_is_waited_for_and_can_stop_the_run(
     assert capsys.readouterr().out == ""  # a quick check prints nothing
     monkeypatch.setattr(baseline_eval, "PAUSE_SHOWN_S", 0.0)
     baseline_eval.waiter("true")()
-    assert "paused 0 min 0 s for --before-cell" in capsys.readouterr().out
+    assert "paused 0 s for --before-cell" in capsys.readouterr().out
     with pytest.raises(SystemExit, match="exited 3: .* --resume"):
         baseline_eval.waiter("exit 3")()
 
@@ -588,8 +588,9 @@ def test_a_cell_that_fails_still_closes_its_session_and_removes_its_state(
         raise OSError("the harness would not start")
 
     state = tmp_path / "state"
-    monkeypatch.setattr(evaluate.tempfile, "mkdtemp", lambda prefix: str(state))
     state.mkdir()
+    only_here = SimpleNamespace(mkdtemp=lambda prefix: str(state))
+    monkeypatch.setattr(evaluate, "tempfile", only_here)
     monkeypatch.setattr(evaluate, "wire", broken)
     client = FakeClient()
     setup = evaluate.CellSetup(client, "http://proxy", "http://engine", "none", "t", {})
@@ -624,6 +625,45 @@ def test_an_answer_left_in_the_state_folder_is_named(tmp_path: Path) -> None:
         1, 1, record("a", "claude-code", False, answer_elsewhere="'7' in x")
     )
     assert line.endswith("an answer.txt outside the task folder")
+
+
+def test_a_stray_answer_never_shows_your_name_or_home(tmp_path: Path) -> None:
+    named = tmp_path / "pi-agent" / f"x-{Path.home().name}-y"
+    named.mkdir(parents=True)
+    (named / "answer.txt").write_text(f"{Path.home()}/data.db")
+    shown = evaluate.stray_answer(tmp_path)
+    assert shown == "'~/data.db' in pi-agent/<folder>/answer.txt"
+    (named / "answer.txt").unlink()
+    (tmp_path / "elsewhere.txt").write_text("7")
+    (tmp_path / "linked").mkdir()
+    (tmp_path / "linked" / "answer.txt").symlink_to(tmp_path / "elsewhere.txt")
+    assert evaluate.stray_answer(tmp_path) is None  # a link is never followed
+
+
+def test_the_harness_log_is_kept_even_when_the_run_fails(
+    course_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    kept: list[str] = []
+
+    def fake_wire(harness: str, folders: Any, *args: Any) -> Any:
+        log = folders.state / "trajectory.json"
+        log.write_text("{}")
+        return SimpleNamespace(write=lambda: None, own_log=log, stdout_name="o")
+
+    def broken(*args: Any) -> None:
+        raise OSError("the box failed")
+
+    def keep(log: Path, folders: Any) -> Path:
+        kept.append(log.name)
+        return log
+
+    monkeypatch.setattr(evaluate, "wire", fake_wire)
+    monkeypatch.setattr(evaluate, "run_boxed", broken)
+    monkeypatch.setattr(evaluate, "keep_log", keep)
+    setup = evaluate.CellSetup(FakeClient(), "http://p", "http://e", "none", "t", {})
+    with pytest.raises(OSError, match="the box failed"):
+        evaluate.run_rollout(EVERY[0], "mini-swe-agent", setup)
+    assert kept == ["trajectory.json"]
 
 
 def test_a_log_in_the_state_folder_is_kept_before_it_goes(tmp_path: Path) -> None:
