@@ -24,7 +24,10 @@ Start the model's engine and the proxy first (``./start.sh``), with the SFT
 adapter on disk (``train_sft.py``). ``--limit`` sets the tasks per harness
 (8; ``--fast`` 4), ``--adapter`` another adapter, ``--resume`` finishes an
 interrupted run, ``--before-cell CMD`` waits before each cell while the
-machine is busy (chapter 24's). Only Python's standard library is needed.
+machine is busy (chapter 24's). ``--label`` names a second adapter's records
+(``--adapter .../sft-no-bias-correction/adapter.safetensors --label
+sft-no-bias-correction --resume`` measures it on the same cells, the base
+model's cells already recorded). Only Python's standard library is needed.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import statistics
 import sys
 import time
@@ -72,6 +76,7 @@ FAST_LIMIT = 4
 # hand (this script never imports the engine).
 SERVES_MODEL = "lfm2.5-2.6b 4-bit"
 BASE, SFT = "base", "sft"
+LABEL_RE = re.compile(r"[A-Za-z0-9._-]+")  # a label names a records file
 PROJECT = "project"  # the project's checkpoints are labelled "project base" ...
 NO_SCRIPT = "none"  # the model writes every reply
 FOLDER = "quick_eval"  # COURSE_HOME/25-sft-in-harnesses/quick_eval/eval_<label>.jsonl
@@ -230,7 +235,10 @@ def both_solved(
 
 
 def calls_lines(
-    before: list[Record], after: list[Record], harnesses: list[str]
+    before: list[Record],
+    after: list[Record],
+    harnesses: list[str],
+    label: str = SFT,
 ) -> list[str]:
     """Calls per solve: averaged over harnesses, and on the cells both solved.
 
@@ -238,6 +246,7 @@ def calls_lines(
         before: The base model's records.
         after: The adapter's records.
         harnesses: The harnesses.
+        label: The adapter's label.
 
     Returns:
         The lines.
@@ -246,7 +255,7 @@ def calls_lines(
     new = average_calls(summarize(after, harnesses), harnesses)
     shown = [f"{value:.1f}" if value is not None else "none" for value in (old, new)]
     lines = [
-        f"calls per solve, averaged over harnesses: {BASE} {shown[0]} -> {SFT} "
+        f"calls per solve, averaged over harnesses: {BASE} {shown[0]} -> {label} "
         f"{shown[1]} (solved cells only, so compare with care)"
     ]
     for harness in harnesses:
@@ -398,9 +407,10 @@ def training_note(adapter: Path) -> str:
     note = adapter.with_name(TRAINING_NOTE)
     try:
         data = json.loads(note.read_text(encoding="utf-8"))
+        correction = "on" if data.get("bias_correction", True) else "off"
         return (
             f"trained on {data['model']} ({data['which']}) · {data['rows']} rows · "
-            f"{data['steps']} steps at lr {data['lr']:g}"
+            f"{data['steps']} steps at lr {data['lr']:g}, bias correction {correction}"
         )
     except (OSError, ValueError, KeyError, TypeError):
         return (
@@ -493,7 +503,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--proxy-url", default=PROXY_URL)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--before-cell", default=None, metavar="CMD")
+    parser.add_argument("--label", default=SFT, help="names the adapter's records")
     args = parser.parse_args()
+    if not LABEL_RE.fullmatch(args.label) or args.label == BASE:
+        parser.error(f"--label is letters, digits, . _ - and not {BASE!r}")
     if args.limit is None:
         args.limit = FAST_LIMIT if args.fast else DEFAULT_LIMIT
     if args.limit < 1:
@@ -506,6 +519,7 @@ def report(
     after: list[Record],
     harnesses: list[str],
     say: Callable[[str], None] = print,
+    label: str = SFT,
 ) -> None:
     """Print both checkpoints, their calls, and every harness's change.
 
@@ -514,15 +528,16 @@ def report(
         after: The adapter's records.
         harnesses: The harnesses.
         say: Where lines go.
+        label: The adapter's label.
     """
-    summaries = {BASE: summarize(before, harnesses), SFT: summarize(after, harnesses)}
+    summaries = {BASE: summarize(before, harnesses), label: summarize(after, harnesses)}
     print_heading("both checkpoints, on the same cells")
     say(format_table(summaries, harnesses))
     for label, summary in summaries.items():
         say(f"{label:<5} {solved_calls(summary, harnesses)}")
-    for line in calls_lines(before, after, harnesses):
+    for line in calls_lines(before, after, harnesses, label):
         say(line)
-    pair = (Checkpoint(BASE, tuple(before)), Checkpoint(SFT, tuple(after)))
+    pair = (Checkpoint(BASE, tuple(before)), Checkpoint(label, tuple(after)))
     show_pairs([pair], say)
     theirs = [project_checkpoint(label) for label in (BASE, SFT)]
     named = [Checkpoint(f"{PROJECT} {c.label}", c.records) for c in theirs]
@@ -576,7 +591,7 @@ def main() -> None:
             BASE, None, tasks, args.harnesses, setup, args, versions
         )
         after = run_checkpoint(
-            SFT, adapter, tasks, args.harnesses, setup, args, versions
+            args.label, adapter, tasks, args.harnesses, setup, args, versions
         )
     finally:  # on every way out, the engine samples with what it had before
         try:
@@ -586,13 +601,13 @@ def main() -> None:
             print(f"the engine was NOT put back: {error}", file=sys.stderr)
     gaps = {
         label: missing_cells(records, tasks, args.harnesses)
-        for label, records in ((BASE, before), (SFT, after))
+        for label, records in ((BASE, before), (args.label, after))
     }
     if any(gaps.values()):
         for label, cells in gaps.items():
             print(f"{label} has no record of {len(cells)} cells: {', '.join(cells)}")
         raise SystemExit(f"{SCRIPT}: both checkpoints must cover the same cells")
-    report(before, after, args.harnesses)
+    report(before, after, args.harnesses, label=args.label)
     minutes, rest = divmod(round(time.perf_counter() - started), 60)
     print(f"this run took {minutes} min {rest} s")
     outside = [r for r in before + after if r.loopback_only is False]

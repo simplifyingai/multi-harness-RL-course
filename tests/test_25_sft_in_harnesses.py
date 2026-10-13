@@ -860,6 +860,34 @@ def test_a_failed_run_puts_the_engines_adapter_back_and_gaps_are_refused(
     assert "sft has no record of 12 cells" in capsys.readouterr().out
 
 
+def test_a_second_adapter_gets_its_own_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["quick_eval.py", "--label", "sft-nbc"])
+    assert quick_eval.parse_args().label == "sft-nbc"
+    for wrong in ("base", "a/b", ""):
+        monkeypatch.setattr(sys, "argv", ["quick_eval.py", "--label", wrong])
+        with pytest.raises(SystemExit):
+            quick_eval.parse_args()
+    base, sft = (list(project_checkpoint(label).records) for label in ("base", "sft"))
+    lines: list[str] = []
+    quick_eval.report(base, sft, HARNESSES, lines.append, label="sft-nbc")
+    text = "\n".join(lines)
+    assert "base -> sft-nbc" in text and "base 7.1 -> sft-nbc 4.8" in text
+
+
+def test_the_training_note_says_how_the_adapter_was_trained(tmp_path: Path) -> None:
+    adapter = tmp_path / "adapter.safetensors"
+    assert "which build trained it is unknown" in quick_eval.training_note(adapter)
+    note = {"model": "~/m", "which": "ours", "rows": 120, "steps": 15, "lr": 5e-5}
+    (tmp_path / "adapter.json").write_text(
+        json.dumps({**note, "bias_correction": False})
+    )
+    assert quick_eval.training_note(adapter) == (
+        "trained on ~/m (ours) · 120 rows · 15 steps at lr 5e-05, bias correction off"
+    )
+
+
 def test_quick_eval_needs_the_adapter_first(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
