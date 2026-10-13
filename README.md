@@ -90,7 +90,7 @@ About 258 minutes of video in 29 chapters.
 
 | # | chapter | minutes | status |
 | ---: | --- | ---: | --- |
-| 24 | Measuring fairly: baseline, pass@1 and noise | 10 | coming |
+| 24 | [Measuring fairly: baseline, pass@1 and noise](24-measuring/) | 10 | ready |
 | 25 | SFT through the harnesses (and fitting it in 9 GB) | 12 | coming |
 | 26 | GRPO through the harnesses, and the run that went wrong | 9 | coming |
 | 27 | How it all combines | 8 | coming |
