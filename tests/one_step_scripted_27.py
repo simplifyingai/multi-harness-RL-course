@@ -1,8 +1,9 @@
 """Run chapter 27's one_step.py with no 2.6B model, for the tests.
 
-Run with the PROJECT's Python, against ``27-how-it-combines/stack.sh
-scripted`` (the project's answer-key teacher answering as the engine: it
-loads only the tokenizer)::
+It has no PEP 723 header on purpose: it needs the project's own packages,
+so it runs with the PROJECT's Python (never ``uv run``), against
+``27-how-it-combines/stack.sh scripted`` (the project's answer-key teacher
+answering as the engine: it loads only the tokenizer)::
 
     MHRL_ENGINE_PORT=... MHRL_PROXY_PORT=... \\
         <project>/.venv/bin/python tests/one_step_scripted_27.py \\

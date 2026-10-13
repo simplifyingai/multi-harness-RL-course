@@ -44,9 +44,13 @@ from typing import Any
 from paths import short_path, tilde
 
 REDACTED = "<redacted>"
-# A secret's name ends in one of these words (ANTHROPIC_API_KEY, GITHUB_TOKEN),
-# while CLAUDE_CODE_MAX_OUTPUT_TOKENS, a count, does not.
-SECRET_NAME = re.compile(r"(^|_)(KEY|TOKEN|SECRET|PASSWORD)$", re.IGNORECASE)
+# A secret's name ends in one of these words, whole or after an underscore
+# (ANTHROPIC_API_KEY, APIKEY, GITHUB_TOKEN, DB_PASSWD), while
+# CLAUDE_CODE_MAX_OUTPUT_TOKENS, a count, does not.
+SECRET_NAME = re.compile(
+    r"(^|_)(API_?KEY|KEY|TOKEN|SECRETS?|PASSWORD|PASSWD|CREDENTIALS?|AUTH)$",
+    re.IGNORECASE,
+)
 SESSION_SHOWN = 8  # characters of a session id shown on screen
 INSTRUCTION_SHOWN = 48  # characters of the task text shown in a command
 WIDTH = 100
@@ -69,7 +73,8 @@ def is_secret_name(name: str) -> bool:
         name: The variable's name.
 
     Returns:
-        True for names ending in KEY, TOKEN, SECRET or PASSWORD.
+        True for names ending in KEY, TOKEN, SECRET, PASSWORD, PASSWD,
+        CREDENTIALS or AUTH.
     """
     return bool(SECRET_NAME.search(name))
 
@@ -125,9 +130,9 @@ def short_id(session_id: str) -> str:
         session_id: The id.
 
     Returns:
-        Its first characters and an ellipsis.
+        Its first characters (never more than half of it) and an ellipsis.
     """
-    return session_id[:SESSION_SHOWN] + "…"
+    return session_id[: min(SESSION_SHOWN, len(session_id) // 2)] + "…"
 
 
 # ------------------------------------------------------------- formatting
@@ -487,6 +492,8 @@ class Namespace:
         return replaced[name] if name in replaced else getattr(self._real, name)
 
 
+# The hooks wrap the project's functions without importing its types, so
+# their signatures say ``Any`` where the project's would name a class.
 @contextlib.contextmanager
 def patched(module: ModuleType, **names: Any) -> Iterator[None]:
     """Swap names in one module, and put every original back afterwards.
@@ -584,18 +591,38 @@ class Tracer:
         self.remasked = 0
         self.budget = int(settings.token_budget)
         self.max_bonus = 0.0
+        self.secrets: set[str] = set()  # every session id seen: the keys
 
     # -- helpers
 
+    def redact(self, text: str) -> str:
+        """Hide every session id this tracer has seen, wherever it appears.
+
+        The last pass before anything is printed: a key can reach a line by
+        a path no other rule knows (a model that echoes its environment into
+        ``answer.txt``, a URL in an error message).
+
+        Args:
+            text: Any text.
+
+        Returns:
+            The text with each known session id replaced by ``<redacted>``.
+        """
+        for secret in self.secrets:
+            text = redact_text(text, secret)
+        return text
+
     def emit(self, lines: Sequence[str]) -> None:
         """Print lines as one block, so threads never interleave inside it.
+
+        Every line goes through ``redact`` first.
 
         Args:
             lines: The lines.
         """
         with self.lock:
             for line in lines:
-                self.say(line)
+                self.say(self.redact(line))
 
     def current(self) -> RolloutTrace | None:
         """Return the rollout this thread is running, if any.
@@ -786,6 +813,8 @@ class Tracer:
             self.local.trace = trace
 
             def on_session(session_id: str, workdir: Path) -> None:
+                with self.lock:
+                    self.secrets.add(session_id)
                 held = ", ".join(sorted(p.name for p in workdir.iterdir()))
                 self.emit(
                     [

@@ -334,7 +334,8 @@ def measure(project: Path) -> Measured:
                     f"{key} command {c}" for c in mirror.commands if c not in commands
                 ]
     pyproject = project / "pyproject.toml"
-    pin = OPENENV_PIN.search(pyproject.read_text()) if pyproject.is_file() else None
+    text = pyproject.read_text(encoding="utf-8") if pyproject.is_file() else ""
+    pin = OPENENV_PIN.search(text)
     code = {
         str(path): count_lines((project / path).read_text(encoding="utf-8"))
         for path in code_files(project)

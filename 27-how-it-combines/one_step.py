@@ -62,6 +62,9 @@ STEPS = 1
 TASK_SEED = 0  # train_grpo's default seed for its task order
 DEFAULT_MAX_DRAWS = 5
 RUNS_ENV = "MHRL_RUNS_DIR"
+# Set before re-running with the project's Python, so a second failure to
+# import mhrl stops instead of re-running forever.
+REEXEC_ENV = "MHRL_COURSE_REEXEC"
 RUNS_FOLDER = "runs"
 STEP_FOLDER = "one_step"
 BASE = "base"
@@ -98,6 +101,8 @@ class Project:
         cli_defaults: ``mhrl.cli.CliDefaults``.
         get_harness: ``mhrl.harnesses.base.get_harness``.
         not_installed: ``mhrl.harnesses.errors.HarnessNotInstalledError``.
+        failures: What a step can fail with: the harnesses' errors, the
+            HTTP client's, and the operating system's.
     """
 
     settings: Any
@@ -107,6 +112,7 @@ class Project:
     cli_defaults: Any
     get_harness: Callable[[str], Any]
     not_installed: type[Exception]
+    failures: tuple[type[Exception], ...] = ()
 
 
 def project_of_module(module: Any) -> Path:
@@ -118,7 +124,9 @@ def project_of_module(module: Any) -> Path:
     Returns:
         The folder holding it.
     """
-    return Path(module.__file__).resolve().parent.parent
+    package = Path(module.__file__).parent if module.__file__ else None
+    package = package or Path(next(iter(module.__path__)))
+    return package.resolve().parent
 
 
 def ensure_project_python(
@@ -142,6 +150,12 @@ def ensure_project_python(
         mhrl = None
     if mhrl is not None and (project is None or project_of_module(mhrl) == project):
         return
+    if os.environ.get(REEXEC_ENV):
+        found = short_path(project_of_module(mhrl)) if mhrl else "no mhrl at all"
+        raise SystemExit(
+            f"{SCRIPT}: the project's Python still cannot import its mhrl "
+            f"(it found {found}); run `uv sync` in the project"
+        )
     if project is None:
         raise SystemExit(
             f"{SCRIPT}: mhrl is not importable here; name the project's checkout "
@@ -158,6 +172,7 @@ def ensure_project_python(
         )
     say(f"{SCRIPT} imports the project, so it runs with {short_path(python)}")
     sys.stdout.flush()
+    os.environ[REEXEC_ENV] = "1"
     os.execv(python, [str(python), str(Path(__file__).resolve()), *arguments])
 
 
@@ -187,10 +202,11 @@ def import_project() -> Project:
         The parts the step uses.
     """
     os.environ.setdefault(RUNS_ENV, str(chapter_home() / RUNS_FOLDER))
+    import httpx
     from mhrl import cli, rollout
     from mhrl.config import get_settings
     from mhrl.harnesses.base import get_harness
-    from mhrl.harnesses.errors import HarnessNotInstalledError
+    from mhrl.harnesses.errors import HarnessError, HarnessNotInstalledError
     from mhrl.tasks.core import load_tasks
     from mhrl.training import grpo
 
@@ -202,6 +218,7 @@ def import_project() -> Project:
         cli_defaults=cli.CliDefaults,
         get_harness=get_harness,
         not_installed=HarnessNotInstalledError,
+        failures=(HarnessError, httpx.HTTPError, OSError, ValueError),
     )
 
 
@@ -380,7 +397,7 @@ def run_draws(
                 seed=TASK_SEED,
             )
         except RuntimeError as error:  # the guard tripped with nothing to keep
-            say(f"stopped   {error}")
+            say(tracer.redact(f"stopped   {error}"))
             return EXIT_FAILED
         metrics = read_metrics(out_dir)
         for line in metrics_lines(metrics):
@@ -464,8 +481,13 @@ def main(argv: list[str] | None = None, say: Callable[[str], None] = print) -> i
         f"shuffled with seed {TASK_SEED}"
     )
     tracer = Tracer(project.settings, say, all_calls=args.all_calls)
-    with tracer.listening(project.grpo, project.rollout):
-        return run_draws(project, tracer, init, args.max_draws, say)
+    try:
+        with tracer.listening(project.grpo, project.rollout):
+            return run_draws(project, tracer, init, args.max_draws, say)
+    except project.failures as error:
+        # An error's message can hold a session URL: redact it like a line.
+        say(tracer.redact(f"stopped   {type(error).__name__}: {error}"))
+        return EXIT_FAILED
 
 
 if __name__ == "__main__":

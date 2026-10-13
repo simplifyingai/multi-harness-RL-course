@@ -38,6 +38,7 @@ SPACE_URL = "https://huggingface.co/spaces/FineEnvs/multi-harness-rl"
 FETCHED = "2026-10-13"
 GRPO_METRICS = HERE / "data" / "project_grpo_metrics.jsonl"
 GRPO_METRICS_SOURCE = "runs/main/grpo/metrics.jsonl"
+GROUP_SIZE = 4  # rollouts per group in that run (the project's CliDefaults)
 FETCH_TIMEOUT_S = 60
 USER_AGENT = "mhrl-course-stacks/1"
 SECONDS_PER_MINUTE = 60
@@ -179,16 +180,19 @@ def recorded_grpo(path: Path = GRPO_METRICS) -> str:
         path: The metrics file (one JSON line per step).
 
     Returns:
-        Its steps, rollouts, summed step time and peak memory, in one line.
+        Its steps, groups, summed step time and peak memory, in one line.
     """
-    rows = [json.loads(line) for line in path.read_text().splitlines() if line]
+    lines = path.read_text(encoding="utf-8").splitlines()
+    rows = [json.loads(line) for line in lines if line.strip()]
     steps = [row for row in rows if "step_seconds" in row]
+    if not steps:
+        return "no steps recorded"
     minutes = sum(row["step_seconds"] for row in steps) / SECONDS_PER_MINUTE
-    rollout_groups = statistics.fmean(row["groups"] for row in steps)
+    groups = statistics.fmean(row["groups"] for row in steps)
     peak = max(row["peak_gb"] for row in steps)
     return (
-        f"{len(steps)} steps of {rollout_groups:.0f} groups of 4, {minutes:.1f} "
-        f"minutes of steps, trainer peak {peak:.2f} GB"
+        f"{len(steps)} steps of {groups:.0f} groups of {GROUP_SIZE}, "
+        f"{minutes:.1f} minutes of steps, trainer peak {peak:.2f} GB"
     )
 
 

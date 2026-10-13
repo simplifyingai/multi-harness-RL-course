@@ -186,11 +186,12 @@ def coverage_lines(measured: project_scan.Measured) -> list[str]:
     code = measured.code
     covered = sum(n for path, n in code.items() if path in published)
     total = sum(code.values())
+    share = PERCENT * covered / total if total else 0.0
     files = sum(1 for path in code if path in published)
     lines = [
         f"the project's code: {len(code)} files, {total:,} lines; chapters "
         f"{PUBLISHED.start}-{PUBLISHED.stop - 1} mirror {files} files, "
-        f"{covered:,} lines ({PERCENT * covered / total:.1f}%)"
+        f"{covered:,} lines ({share:.1f}%)"
     ]
     later = [
         f"{path} {n}"
@@ -333,12 +334,14 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--project", help="a checkout to measure (or MHRL_PROJECT)")
-    parser.add_argument("--chapter", type=int, help="print one chapter")
-    parser.add_argument("--part", type=int, help="print one part of the course")
+    only = parser.add_mutually_exclusive_group()
+    only.add_argument("--chapter", type=int, help="print one chapter")
+    only.add_argument("--part", type=int, help="print one part of the course")
     parser.add_argument(
         "--save-snapshot",
         type=Path,
-        help="write the checkout's measurements as a snapshot to this file",
+        help="for maintainers: write the checkout's measurements as a snapshot "
+        "(data/project_snapshot.json is the bundled one)",
     )
     return parser.parse_args(argv)
 

@@ -19,6 +19,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 import types
 from collections.abc import Iterator
 from pathlib import Path
@@ -503,7 +504,7 @@ def fake_grpo_modules() -> tuple[types.ModuleType, types.ModuleType]:
         args[4].rollout(SESSION)
         return types.SimpleNamespace(
             correct=True,
-            submitted="7",
+            submitted=f"7 {SESSION}",  # a model that echoed its key
             reason="correct",
             n_sampled=47,
             reward=1.0977,
@@ -635,6 +636,45 @@ def test_without_mhrl_a_checkout_must_be_named(
     (tmp_path / "mhrl" / "config.py").write_text("")
     with pytest.raises(SystemExit, match="run `uv sync` in the project"):
         one_step.ensure_project_python(str(tmp_path), [], print)
+
+
+def test_the_rerun_with_the_projects_python_happens_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "mhrl").mkdir()
+    (tmp_path / "mhrl" / "config.py").write_text("")
+    (tmp_path / ".venv" / "bin").mkdir(parents=True)
+    (tmp_path / ".venv" / "bin" / "python").write_text("")
+    monkeypatch.setitem(sys.modules, "mhrl", None)
+    monkeypatch.delenv(one_step.REEXEC_ENV, raising=False)
+    calls: list[list[str]] = []
+
+    def fake_execv(path: object, argv: list[str]) -> None:
+        calls.append(argv)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(one_step.os, "execv", fake_execv)
+    with pytest.raises(SystemExit):
+        one_step.ensure_project_python(str(tmp_path), ["--max-draws", "1"], print)
+    assert calls[0][-2:] == ["--max-draws", "1"]
+    assert os.environ[one_step.REEXEC_ENV] == "1"
+    calls.clear()
+    with pytest.raises(SystemExit, match="still cannot import its mhrl"):
+        one_step.ensure_project_python(str(tmp_path), [], print)
+    assert calls == []  # the second pass stops instead of re-running
+
+
+def test_the_tracer_hides_a_known_key_on_any_line() -> None:
+    settings = types.SimpleNamespace(token_budget=2000, engine_url="x")
+    said: list[str] = []
+    tracer = hooks.Tracer(settings, said.append)
+    tracer.secrets.add(SESSION)
+    tracer.emit([f"grade wrong (answer '{SESSION}')"])
+    assert said == ["grade wrong (answer '<redacted>')"]
+    assert tracer.redact(f"GET /sessions/{SESSION}/rollout") == (
+        "GET /sessions/<redacted>/rollout"
+    )
+    assert hooks.short_id("s123") == "s1…"
 
 
 class HealthHandler(http.server.BaseHTTPRequestHandler):
@@ -810,28 +850,120 @@ def test_the_stack_refuses_a_port_already_in_use(tmp_path: Path) -> None:
     assert not (tmp_path / "home" / "27-how-it-combines" / "stack").exists()
 
 
+def run_stop(project: Path, home: Path) -> subprocess.CompletedProcess[str]:
+    """Run ``stack.sh stop``.
+
+    Args:
+        project: The fake checkout.
+        home: The COURSE_HOME whose pid files it reads.
+
+    Returns:
+        The finished process.
+    """
+    return subprocess.run(
+        [str(CHAPTER / "stack.sh"), "stop"],
+        env={**os.environ, "MHRL_PROJECT": str(project), "COURSE_HOME": str(home)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+
+def fake_server(port: int) -> subprocess.Popen[bytes]:
+    """A process whose command line looks like one of the project's servers.
+
+    Args:
+        port: The ``--port`` it shows.
+
+    Returns:
+        The running process (it only sleeps).
+    """
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import time; time.sleep(60)",
+            "-m",
+            "mhrl.engine.server",
+            "--port",
+            str(port),
+        ]
+    )
+
+
+def start_time(pid: int) -> str:
+    """Return a process's start time as ``ps`` prints it (what stack.sh keeps).
+
+    Args:
+        pid: The process.
+
+    Returns:
+        Its start time.
+    """
+    return subprocess.run(
+        ["ps", "-p", str(pid), "-o", "lstart="], capture_output=True, text=True
+    ).stdout
+
+
+def record_server(logs: Path, name: str, pid: int, port: int, start: str) -> None:
+    """Write the pid, port and start files stack.sh writes at launch.
+
+    Args:
+        logs: Its log folder.
+        name: The server's name.
+        pid: Its pid.
+        port: The port it was started on.
+        start: Its start time.
+    """
+    (logs / f"{name}.pid").write_text(f"{pid}\n")
+    (logs / f"{name}.port").write_text(f"{port}\n")
+    (logs / f"{name}.start").write_text(start)
+
+
 def test_the_stack_stops_only_its_own_servers(tmp_path: Path) -> None:
     project = fake_checkout(tmp_path)
-    logs = tmp_path / "home" / "27-how-it-combines" / "stack"
+    home = tmp_path / "home"
+    logs = home / "27-how-it-combines" / "stack"
     logs.mkdir(parents=True)
-    stranger = subprocess.Popen(["sleep", "30"])  # a process it did not start
+    stranger = subprocess.Popen(["sleep", "60"])  # not a server at all
+    other_port = fake_server(4321)  # a server like ours, on another port
+    restarted = fake_server(5432)  # our port, but it started at another time
+    ours = fake_server(6543)  # the one this script started
     try:
-        (logs / "engine.pid").write_text(f"{stranger.pid}\n")
-        result = subprocess.run(
-            [str(CHAPTER / "stack.sh"), "stop"],
-            env={
-                **os.environ,
-                "MHRL_PROJECT": str(project),
-                "COURSE_HOME": str(tmp_path / "home"),
-            },
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        )
-        assert result.returncode == 0
-        assert stranger.poll() is None  # still running
-        assert not (logs / "engine.pid").exists()
+        time.sleep(0.5)
+        record_server(logs, "engine", stranger.pid, 1111, start_time(stranger.pid))
+        record_server(logs, "teacher", other_port.pid, 1234, start_time(other_port.pid))
+        record_server(logs, "proxy", restarted.pid, 5432, "Thu Jan  1 00:00:00 1970\n")
+        result = run_stop(project, home)
+        assert result.returncode == 0, result.stderr
+        assert stranger.poll() is None
+        assert other_port.poll() is None
+        assert restarted.poll() is None
+        assert result.stdout == ""
+        assert not list(logs.glob("*.pid"))
+        record_server(logs, "engine", ours.pid, 6543, start_time(ours.pid))
+        result = run_stop(project, home)
+        assert result.stdout.startswith(f"stopped engine (pid {ours.pid})")
+        assert ours.wait(timeout=30) is not None
     finally:
-        stranger.kill()
-        stranger.wait()
+        for process in (stranger, other_port, restarted, ours):
+            process.kill()
+            process.wait()
+
+
+def test_the_stack_never_prints_a_session_id_from_a_log(tmp_path: Path) -> None:
+    project = fake_checkout(tmp_path)
+    home = tmp_path / "home"
+    logs = home / "27-how-it-combines" / "stack"
+    logs.mkdir(parents=True)
+    (logs / "proxy.pid").write_text("999999\n")  # long gone
+    (logs / "proxy.log").write_text(
+        f'INFO: 127.0.0.1:1 - "GET /sessions/{SESSION}/rollout HTTP/1.1" 200 OK\n'
+        f'INFO: 127.0.0.1:1 - "DELETE /sessions/{SESSION} HTTP/1.1" 200 OK\n'
+    )
+    result = run_stop(project, home)
+    assert result.returncode == 0
+    assert SESSION not in result.stdout
+    assert "/sessions/<redacted>/rollout" in result.stdout
+    assert '"DELETE /sessions/<redacted> HTTP/1.1"' in result.stdout
