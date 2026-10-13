@@ -1,0 +1,26 @@
+grpo_harness.py --guard-demo · attempt 1's rollouts, step by step, past the guard
+  records   data/project_grpo/attempt1 (the project's runs/main/grpo_attempt1, slimmed)
+            8 steps x 8 rollouts
+  guard     after a step's rollouts, before its update: stop when tokens per call pass 150,
+            and keep the adapter from before the last update
+  tokens    per call: a rollout's sampled tokens / its calls; the median and
+            the mean over the step's rollouts. The guard reads the median.
+
+  step  sampled with      median   mean  correct  the guard
+     1  the SFT adapter       46     49      38%  under 150: update 1 -> adapter_step001
+     2  adapter_step001       38     38      38%  under 150: update 2 -> adapter_step002
+     3  adapter_step002       40     41      62%  under 150: update 3 -> adapter_step003
+     4  adapter_step003       45     57      50%  under 150: update 4 -> adapter_step004
+     5  adapter_step004      130    134      25%  under 150: update 5 -> adapter_step005
+     6  adapter_step005      111    120      25%  under 150: update 6 -> adapter_step006
+     7  adapter_step006      492    465      12%  STOP: adapter_step006 made these; keep adapter_step005
+
+  stopped at step 7, before update 7: adapter_final = adapter_step005
+  (the run itself went on to make 8 updates)
+  the longest replies it let through: median 130 at step 5, 2.8 times step 1's
+  the project kept adapter_step004, the adapter step 5's rollouts came from
+  (replay.py attempt1 shows how it scored)
+  limits compared on the same records:
+    --guard-tokens 150  stops at step 7, keeps adapter_step005
+    --guard-tokens 100  stops at step 5, keeps adapter_step003
+    --guard-tokens 60   stops at step 5, keeps adapter_step003

@@ -1,0 +1,10 @@
+steps.py · data/project_grpo/attempt2
+step  correct  calls  tokens/call: median   mean  rollout s (median)
+   1      38%    6.5                   46     51                  56
+   2      25%    6.5                   40     43                  41
+   3      62%    6.0                   43     43                  37
+   4      75%    5.6                   37     40                  35
+   5      50%    6.1                   45     50                  30
+   6      25%    6.5                   43     45                  36
+tokens/call: a rollout's sampled tokens / its model calls; the median and the mean
+  over the step's rollouts. The length guard reads the median.

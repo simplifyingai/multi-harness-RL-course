@@ -1,0 +1,53 @@
+replay.py attempt2 · the project's GRPO run, from its recorded files
+  records   data/project_grpo/attempt2 (the project's runs/main/grpo, slimmed)
+            6 steps x 8 rollouts = 48 rollouts, each step 2 tasks x 4
+  settings  the token bonus (every recorded reward reproduces with it)
+            lr 1e-5 with AdamW's bias correction
+            the length guard at 150 tokens per call
+            float32 log-probabilities in the engine
+
+  step  correct  reward  calls  tokens/call    replies at  no-signal   ratio     peak
+                                median  mean  the 1,024 cap     groups
+     1      38%    0.41    6.5      46    51     0 of 52          1/2   1.000  3.06 GB
+     2      25%    0.27    6.5      40    43     0 of 52          1/2   1.001  3.29 GB
+     3      62%    0.68    6.0      43    43     0 of 48          0/2   0.999  3.92 GB
+     4      75%    0.82    5.6      37    40     0 of 45          0/2   1.001  6.88 GB
+     5      50%    0.54    6.1      45    50     0 of 49          0/2   1.000  6.88 GB
+     6      25%    0.27    6.5      43    45     0 of 52          0/2   1.001  6.88 GB
+  correct      the share of the step's 8 rollouts whose answer was right
+  tokens/call  a rollout's sampled tokens / its model calls; the median and the mean
+               over the step's 8 rollouts. The length guard reads the median.
+  replies      the model's replies that reached the 1,024-token cap, of all its replies
+  ratio        the trainer's mean importance ratio over the tokens it trained on; peak:
+               the trainer's MLX peak memory (both from metrics.jsonl)
+  each step's rollouts were sampled with the adapter the step before saved
+
+  what the project's `python -m mhrl.cli steps` printed (runs/logs/take4_steps.log):
+    51 43 43 40 50 45
+    reproduced from the records: the same numbers. It is the mean, never the median
+    the guard read the median: 46 40 43 37 45 43.
+
+  right rollouts per step, by harness:
+    claude-code    0/4 0/4 4/4 2/4 2/4 1/4
+    mini-swe-agent 3/4 2/4 1/4 4/4 2/4 1/4
+
+  what each harness gave the updates (groups with contrast only, each shared prefix once):
+    harness         contrast  rows  tokens per row  tokens trained
+    claude-code     4 of 6      18           3,061    4,472 (42%)
+    mini-swe-agent  6 of 6      30           1,275    6,122 (58%)
+    every step counts both harnesses alike; the tokens they gave do not
+  ratio 0.999 to 1.001 over the 6 steps; trainer peak 6.88 GB (step 4)
+  8 rollouts per step, on other tasks every step: one rollout is 12.5 points,
+  and at 50% the standard error is 17.7 points. Per-step accuracy is no progress meter;
+  tokens per call is steadier.
+
+━━ the adapter the project kept and evaluated: adapter_final.safetensors
+  (summary_rl.json names runs/main/grpo/adapter_final.safetensors)
+
+━━ every pair of checkpoints, cell by cell (exact McNemar p)
+  pair                                   harness         cells  before  after  gained  lost  flipped  p      reading
+  project sft -> attempt2 adapter_final  mini-swe-agent     24      18     20       2     0        2  0.500  within noise
+  project sft -> attempt2 adapter_final  claude-code        24      17     18       2     1        3  1.000  within noise
+  project sft -> attempt2 adapter_final  pi                 24       9      9       5     5       10  1.000  within noise
+  p < 0.05 reads as beyond noise; anything else, within it
+  churn: pi project sft -> attempt2 adapter_final: 10 of 24 cells flipped, 10 of them cancel out: score +0

@@ -1,0 +1,59 @@
+replay.py attempt1 · the project's GRPO run, from its recorded files
+  records   data/project_grpo/attempt1 (the project's runs/main/grpo_attempt1, slimmed)
+            8 steps x 8 rollouts = 64 rollouts, each step 2 tasks x 4
+  settings  the article's call bonus (every recorded reward reproduces with it)
+            lr 4e-5 without AdamW's bias correction (mhrl/cli.py's comment)
+            no length guard
+            bfloat16 log-probabilities in the engine (chapter 15)
+
+  step  correct  reward  calls  tokens/call    replies at  no-signal   ratio     peak
+                                median  mean  the 1,024 cap     groups
+     1      38%    0.40    5.9      46    49     0 of 47          1/2   0.996  3.75 GB
+     2      38%    0.39    5.5      38    38     0 of 44          0/2   0.997  4.32 GB
+     3      62%    0.65    6.8      40    41     0 of 54          0/2   0.996  4.32 GB
+     4      50%    0.52    4.6      45    57     0 of 37          1/2   1.000  4.32 GB
+     5      25%    0.26    3.0     130   134     0 of 24          1/2   0.995  4.32 GB
+     6      25%    0.26    4.1     111   120     0 of 33          1/2   0.997  4.32 GB
+     7      12%    0.13    3.4     492   465     7 of 27          1/2   0.998  4.36 GB
+     8      12%    0.13    3.8     562   654    15 of 30          1/2   0.999  4.36 GB
+  correct      the share of the step's 8 rollouts whose answer was right
+  tokens/call  a rollout's sampled tokens / its model calls; the median and the mean
+               over the step's 8 rollouts. The length guard reads the median.
+               These records predate n_sampled: a rollout's sampled tokens are
+               counted from its captured rows, each shared prefix once (on attempt 2,
+               which has both, the count equals n_sampled for all 48 rollouts).
+  replies      the model's replies that reached the 1,024-token cap, of all its replies
+  ratio        the trainer's mean importance ratio over the tokens it trained on; peak:
+               the trainer's MLX peak memory (both from metrics.jsonl)
+  each step's rollouts were sampled with the adapter the step before saved
+  of the 22 replies at the cap, 21 hold no tool call: the cap cut them off before it
+
+  what the project's `python -m mhrl.cli steps` printed (runs/logs/take3_steps.log):
+    46 38 40 57 127 105 365 404
+    reproduced from the records: the same numbers. It is the mean, never the median
+    and, for records without n_sampled, only each rollout's FIRST captured row.
+    Every row counted, the mean is 49 38 41 57 134 120 465 654;
+    the median, what the guard reads, 46 38 40 45 130 111 492 562.
+
+  right rollouts per step, by harness:
+    claude-code    0/4 2/4 4/4 0/4 0/4 0/4 0/4 0/4
+    mini-swe-agent 3/4 1/4 1/4 4/4 2/4 2/4 1/4 1/4
+
+  what each harness gave the updates (groups with contrast only, each shared prefix once):
+    harness         contrast  rows  tokens per row  tokens trained
+    claude-code     2 of 8      10           2,653    1,510 (7%)
+    mini-swe-agent  8 of 8      54           1,265   19,478 (93%)
+    every step counts both harnesses alike; the tokens they gave do not
+  ratio 0.995 to 1.000 over the 8 steps; trainer peak 4.36 GB (step 7)
+
+━━ the adapter the project kept and evaluated: adapter_step004.safetensors
+  (summary_rl_attempt1.json names runs/main/grpo/adapter_step004.safetensors)
+  that folder was attempt 1's, before it was renamed grpo_attempt1. adapter_step004
+  is the adapter step 5's rollouts were sampled with. pi is left out below: this
+  adapter was evaluated once, before chapter 19's sandbox fix, and never again.
+
+━━ every pair of checkpoints, cell by cell (exact McNemar p)
+  pair                                     harness         cells  before  after  gained  lost  flipped  p      reading
+  project sft -> attempt1 adapter_step004  mini-swe-agent     24      18     20       5     3        8  0.727  within noise
+  project sft -> attempt1 adapter_step004  claude-code        24      17      0       0    17       17  0.000  lost: beyond noise
+  p < 0.05 reads as beyond noise; anything else, within it
