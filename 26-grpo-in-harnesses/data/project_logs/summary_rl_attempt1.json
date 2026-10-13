@@ -1,0 +1,29 @@
+{
+  "per_harness": {
+    "mini-swe-agent": {
+      "cells": 24,
+      "solved": 20,
+      "accuracy": 83.33333333333333,
+      "calls_when_solved": 4.65,
+      "timeouts": 0
+    },
+    "claude-code": {
+      "cells": 24,
+      "solved": 0,
+      "accuracy": 0.0,
+      "calls_when_solved": null,
+      "timeouts": 1
+    },
+    "pi": {
+      "cells": 24,
+      "solved": 0,
+      "accuracy": 0.0,
+      "calls_when_solved": null,
+      "timeouts": 0
+    }
+  },
+  "average_accuracy": 27.777777777777775,
+  "cells": 72,
+  "label": "rl",
+  "adapter": "runs/main/grpo/adapter_step004.safetensors"
+}

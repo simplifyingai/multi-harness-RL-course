@@ -1,0 +1,7 @@
+[grpo] step 1/6 · 00:02:03 · reward 0.41 · correct 38% · calls 6.5 · no-signal groups 1/2 · ratio 1.000 · peak 3.1 GB
+[grpo] step 2/6 · 00:03:51 · reward 0.27 · correct 25% · calls 6.5 · no-signal groups 1/2 · ratio 1.001 · peak 3.3 GB
+[grpo] step 3/6 · 00:05:49 · reward 0.68 · correct 62% · calls 6.0 · no-signal groups 0/2 · ratio 0.999 · peak 3.9 GB
+[grpo] step 4/6 · 00:08:14 · reward 0.82 · correct 75% · calls 5.6 · no-signal groups 0/2 · ratio 1.001 · peak 6.9 GB
+[grpo] step 5/6 · 00:10:18 · reward 0.54 · correct 50% · calls 6.1 · no-signal groups 0/2 · ratio 1.000 · peak 6.9 GB
+[grpo] step 6/6 · 00:12:33 · reward 0.27 · correct 25% · calls 6.5 · no-signal groups 0/2 · ratio 1.001 · peak 6.9 GB
+GRPO-DONE

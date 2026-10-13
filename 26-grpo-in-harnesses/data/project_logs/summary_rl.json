@@ -1,0 +1,37 @@
+{
+  "per_harness": {
+    "mini-swe-agent": {
+      "cells": 24,
+      "solved": 20,
+      "accuracy": 83.33333333333333,
+      "calls_when_solved": 4.75,
+      "timeouts": 0
+    },
+    "claude-code": {
+      "cells": 24,
+      "solved": 18,
+      "accuracy": 75.0,
+      "calls_when_solved": 4.055555555555555,
+      "timeouts": 0
+    },
+    "pi": {
+      "cells": 24,
+      "solved": 9,
+      "accuracy": 37.5,
+      "calls_when_solved": 4.111111111111111,
+      "timeouts": 0
+    }
+  },
+  "average_accuracy": 65.27777777777777,
+  "cells": 72,
+  "label": "rl",
+  "adapter": "runs/main/grpo/adapter_final.safetensors",
+  "pi_before_sandbox_fix": {
+    "cells": 24,
+    "solved": 0,
+    "accuracy": 0.0,
+    "calls_when_solved": null,
+    "timeouts": 0
+  },
+  "pi_note": "re-evaluated after the sandbox fix (pi's write tool)"
+}
