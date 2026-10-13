@@ -82,6 +82,20 @@ class Task:
     answer_type: str
 
 
+def gold_folder() -> Path:
+    """The folder holding the family's task records, gold answers included.
+
+    The sandbox hides it from every harness run (chapter 19): reading the
+    gold answers would be reward hacking. Chapter 24's held-out records were
+    bundled in its ``data/`` folder, which its box hid; this family's are
+    made under ``COURSE_HOME``, so this folder is the one the box must hide.
+
+    Returns:
+        ``COURSE_HOME/29-make-it-yours/csv-tasks``.
+    """
+    return chapter_home() / TASKS_FOLDER
+
+
 def tasks_path(seed: int = DEFAULT_SEED) -> Path:
     """Where ``make_csv_tasks.py`` writes one seed's tasks.
 
@@ -91,7 +105,7 @@ def tasks_path(seed: int = DEFAULT_SEED) -> Path:
     Returns:
         ``COURSE_HOME/29-make-it-yours/csv-tasks/seed-<seed>.jsonl``.
     """
-    return chapter_home() / TASKS_FOLDER / f"seed-{seed}.jsonl"
+    return gold_folder() / f"seed-{seed}.jsonl"
 
 
 def load_tasks(path: Path) -> list[Task]:

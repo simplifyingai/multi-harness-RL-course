@@ -82,6 +82,7 @@ from tasks import (
     DEFAULT_SEED,
     Task,
     find_task,
+    gold_folder,
     prepare_workdir,
     task_instruction,
 )
@@ -347,7 +348,10 @@ def run_boxed(wiring: Wiring, folders: RunFolders, timeout_s: int) -> Process:
         HarnessInstallError: If the sandbox cannot be applied (nothing runs).
     """
     try:
-        params = sandbox_params(workdir=folders.task, state_dir=folders.state)
+        # The box hides the folder of gold answers (in COURSE_HOME, not data/).
+        params = sandbox_params(
+            workdir=folders.task, state_dir=folders.state, tasks_dir=gold_folder()
+        )
         argv = sandbox_command(wiring.argv, params=params)
     except SandboxError as error:
         raise HarnessInstallError(f"no sandbox, so no run: {error}") from error
