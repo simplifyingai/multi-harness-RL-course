@@ -116,7 +116,10 @@ the engine's peak memory per segment: 3.24, 3.19, 3.12, 2.90 GB
 
 A first attempt at commit `bee89dd` is kept in the run log (`first-attempt/`).
 Its scripted part matched this one; its model part is the subject of
-"The baseline, run twice" below.
+"The baseline, run twice" below. Commit `49a5300`, after the run, answers a
+code review of `evaluate.py` and `baseline_eval.py` (a misplaced answer's
+record never shows your name, the harness's log is kept when a cell fails,
+a state folder that cannot be set up is removed); no measured step changed.
 
 ## Which 24 tasks: `baseline_eval.py --plan`
 
@@ -521,13 +524,13 @@ article cites without naming the two harnesses.
 
 ## The files
 
-Line counts from the run log: all lines, and the lines of code (no blank
+Line counts at commit `49a5300`: all lines, and the lines of code (no blank
 lines, comments or docstrings), counted with Python's own tokenizer.
 
 | file | lines | code | what it is |
 | --- | ---: | ---: | --- |
-| `baseline_eval.py` | 482 | 277 | the protocol, the task picks, the harness checks, the run, the table |
-| `evaluate.py` | 623 | 283 | the project's `balanced`, `summarize`, `format_table` and `evaluate`; one cell from chapter 23's steps, its state in the temp folder |
+| `baseline_eval.py` | 489 | 278 | the protocol, the task picks, the harness checks, the run, the table |
+| `evaluate.py` | 635 | 291 | the project's `balanced`, `summarize`, `format_table` and `evaluate`; one cell from chapter 23's steps, its state in the temp folder |
 | `noise.py` | 695 | 383 | one task's weight, intervals, identical models, the ceiling, the macro average, every pair, the broken evaluation, the article's box |
 | `stats.py` | 225 | 75 | chapter 14's `stats.py`, plus the Wilson interval and the identical-models arithmetic |
 | `fetch_model.py` | 287 | 164 | fetches the model or its tokenizer when missing, checked by SHA-256 |
