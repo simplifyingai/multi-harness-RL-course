@@ -961,9 +961,11 @@ def test_the_stack_never_prints_a_session_id_from_a_log(tmp_path: Path) -> None:
     (logs / "proxy.log").write_text(
         f'INFO: 127.0.0.1:1 - "GET /sessions/{SESSION}/rollout HTTP/1.1" 200 OK\n'
         f'INFO: 127.0.0.1:1 - "DELETE /sessions/{SESSION} HTTP/1.1" 200 OK\n'
+        f"INFO intercept session {SESSION} hit its model-call budget (8)\n"
     )
     result = run_stop(project, home)
     assert result.returncode == 0
     assert SESSION not in result.stdout
     assert "/sessions/<redacted>/rollout" in result.stdout
     assert '"DELETE /sessions/<redacted> HTTP/1.1"' in result.stdout
+    assert "intercept session <redacted> hit its model-call budget" in result.stdout

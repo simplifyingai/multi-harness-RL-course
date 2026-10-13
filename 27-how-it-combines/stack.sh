@@ -43,9 +43,10 @@ LOGS="$COURSE_HOME_DIR/27-how-it-combines/stack"
 WAIT_S=180
 STOP_WAIT_S=30
 TAIL_LINES=3
-# The proxy's access log names each session in its URLs (/sessions/<id>/...),
-# and a session id is a harness's API key: never print one.
-REDACT_SESSIONS='s#/sessions/[^/ ?"]+#/sessions/<redacted>#g'
+# The proxy's log names each session, in its URLs (/sessions/<id>/...) and in
+# its own lines ("session s0a1... hit its model-call budget"), and a session id
+# is a harness's API key: never print one. OpenEnv's ids are "s" + 24 hex.
+REDACT_SESSIONS='s#/sessions/[^/ ?"]+#/sessions/<redacted>#g; s#s[0-9a-f]{24}#<redacted>#g'
 
 say() { printf '%s\n' "$*"; }
 
