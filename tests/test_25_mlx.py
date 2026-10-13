@@ -487,6 +487,13 @@ def test_each_reason_to_refuse_is_said_and_a_fit_says_nothing() -> None:
     assert over == "projected 9.03 GB, over the 9.00 GB budget"
     busy = refuse(memory_probe.BY_NAME["chunked"], 2048, 5 * GB, 9 * GB, 1 * GB, 2 * GB)
     assert busy == "it would need 3.0 GB more, and the machine has 1.0 GB free now"
+    chunked = memory_probe.BY_NAME["chunked"]
+    assert refuse(chunked, 2048, 5 * GB, 9 * GB, 4 * GB, 2 * GB) == ""
+    kept = refuse(chunked, 2048, 5 * GB, 9 * GB, 4 * GB, 2 * GB, reserve=1.5 * GB)
+    assert kept == (
+        "it would need 3.0 GB more, and the machine has 4.0 GB free now, "
+        "1.5 GB of it kept for the rest"
+    )
 
 
 def test_the_projects_figures_label_the_cells_it_measured() -> None:

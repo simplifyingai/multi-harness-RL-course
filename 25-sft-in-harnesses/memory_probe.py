@@ -31,14 +31,14 @@ each pass it PROJECTS the peak (from the setting's last measured pass,
 scaled by how that setting grows, or, before any, from a generous count of
 the arrays the pass makes) and refuses, with the reason printed, any row
 projected over the budget (9.0 GB) or over what the machine has free right
-now. Fused attention runs only up to 4,096 tokens; at 6,144 the probe shows
-the project's recorded 11.9 GB instead of measuring it again. It also
-refuses to start while this chapter's engine (``./start.sh``) holds the
-model's memory.
+now, less 15% of its memory left for everything else. Fused attention runs
+only up to 4,096 tokens; at 6,144 the probe shows the project's recorded
+11.9 GB instead of measuring it again. It also refuses to start while this
+chapter's engine (``./start.sh``) holds the model's memory.
 
 Run ``uv run memory_probe.py`` (a few minutes; nothing else heavy should run
-meanwhile). ``--lengths``, ``--settings`` and ``--budget-gb`` narrow it,
-``--fast`` uses Liquid's export. The results go to
+meanwhile). ``--lengths``, ``--settings``, ``--budget-gb`` and ``--keep-free``
+narrow it, ``--fast`` uses Liquid's export. The results go to
 ``COURSE_HOME/25-sft-in-harnesses/memory_probe/results.json``.
 """
 
@@ -78,6 +78,8 @@ from training import (
 SCRIPT = "memory_probe.py"
 LENGTHS = (1024, 2048, 4096, 6144, 8192)
 BUDGET_GB = 9.0  # the trainer's share of the laptop (the project's "8-10 GB")
+KEEP_FREE_PERCENT = 15.0  # of the machine's memory, left to everything else
+PERCENT = 100.0
 FUSED_MAX_TOKENS = 4096  # the review's rule: fused attention only up to 4K
 PROJECT_FUSED_6K_GB = 11.9  # mhrl/training/common.py, chunked_attention
 PROJECT_FUSED_LENGTH = 6144  # "11.9 GB peak at 6K tokens, measured"
@@ -340,6 +342,7 @@ def refusal(
     budget: float,
     free: float | None,
     held: float,
+    reserve: float = 0.0,
 ) -> str:
     """Say why a pass must not run, or nothing when it may.
 
@@ -350,6 +353,8 @@ def refusal(
         budget: The budget in bytes.
         free: Bytes the machine has free now, or None when unknown.
         held: Bytes MLX holds now (the projection includes them).
+        reserve: Bytes of the free memory left for everything else on the
+            machine (``--keep-free``), never taken by a pass.
 
     Returns:
         The reason, or "" when the pass may run.
@@ -364,10 +369,13 @@ def refusal(
             f"projected {projected / GIGABYTE:.2f} GB, over the "
             f"{budget / GIGABYTE:.2f} GB budget"
         )
-    if free is not None and projected - held > free:
+    if free is not None and projected - held > free - reserve:
+        kept = (
+            f", {reserve / GIGABYTE:.1f} GB of it kept for the rest" if reserve else ""
+        )
         reasons.append(
             f"it would need {(projected - held) / GIGABYTE:.1f} GB more, and the "
-            f"machine has {free / GIGABYTE:.1f} GB free now"
+            f"machine has {free / GIGABYTE:.1f} GB free now{kept}"
         )
     return "; ".join(reasons)
 
@@ -417,6 +425,15 @@ def free_bytes(read: Callable[[], str] | None = None) -> float | None:
         if name.strip() in FREE_KINDS:
             pages += int(value.strip().rstrip("."))
     return float(pages * int(size.group(1)))
+
+
+def machine_bytes() -> float:
+    """The machine's memory.
+
+    Returns:
+        Bytes (page size times physical pages).
+    """
+    return float(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES"))
 
 
 def engine_running(home: Path) -> int | None:
@@ -511,6 +528,7 @@ def run_setting(
     say: Callable[[str], None],
     free: Callable[[], float | None] | None = None,
     on_outcome: Callable[[Outcome], None] | None = None,
+    reserve: float = 0.0,
 ) -> list[Outcome]:
     """Run one setting over the lengths, shortest first, refusing what will not fit.
 
@@ -523,6 +541,7 @@ def run_setting(
         say: Where lines go.
         free: Reads the machine's free bytes (``free_bytes`` when None).
         on_outcome: Called with each cell as it ends (main saves it at once).
+        reserve: Free bytes a pass must leave to the rest of the machine.
 
     Returns:
         One outcome per length.
@@ -542,7 +561,9 @@ def run_setting(
             recorded_gb=recorded_for(setting, length),
         )
         held = float(mx.get_active_memory())
-        outcome.refused = refusal(setting, length, projected, budget, read_free(), held)
+        outcome.refused = refusal(
+            setting, length, projected, budget, read_free(), held, reserve
+        )
         if failed and not outcome.refused:  # a longer row would fail too
             outcome.refused = f"not run: the {failed:,}-token pass failed"
         tag = f"[{setting.name:<{NAME_COLUMN - 1}} {length:>6,}]"
@@ -706,6 +727,12 @@ def parse_args() -> argparse.Namespace:
         "--settings", type=setting_list, default=list(SETTINGS), help="which settings"
     )
     parser.add_argument("--budget-gb", type=float, default=BUDGET_GB)
+    parser.add_argument(
+        "--keep-free",
+        type=float,
+        default=KEEP_FREE_PERCENT,
+        help="percent of the machine's memory a pass must leave free",
+    )
     parser.add_argument("--fast", action="store_true", help="Liquid's export")
     return parser.parse_args()
 
@@ -721,6 +748,8 @@ def main() -> None:
     args = parse_args()
     if args.budget_gb <= 0:
         raise SystemExit(f"{SCRIPT}: --budget-gb must be above 0")
+    if not 0 <= args.keep_free < PERCENT:
+        raise SystemExit(f"{SCRIPT}: --keep-free is a percent, from 0 to under 100")
     home = chapter_home()
     pid = engine_running(home)
     if pid is not None:
@@ -730,6 +759,7 @@ def main() -> None:
         )
     folder, which = pick_model(args.fast)
     budget = args.budget_gb * GIGABYTE
+    reserve = args.keep_free / PERCENT * machine_bytes()
     print(f"{SCRIPT} · one forward + backward pass per row, under a budget")
     print(f"  model     {short_path(folder)} ({which}), chapter 13's adapter")
     print(
@@ -740,6 +770,11 @@ def main() -> None:
     print(
         f"  budget    {args.budget_gb:.1f} GB: a row projected over it is refused; "
         f"fused attention runs only up to {FUSED_MAX_TOKENS:,} tokens"
+    )
+    print(
+        f"  machine   {machine_bytes() / GIGABYTE:.1f} GB; a pass must leave "
+        f"{args.keep_free:g}% ({reserve / GIGABYTE:.1f} GB) of it free for "
+        "everything else"
     )
     print(
         f"  rows      random token ids, the last 1/{TRAINED_SHARE} of each "
@@ -770,7 +805,14 @@ def main() -> None:
     for setting in args.settings:
         print(f"{setting.name}: attention {setting.attention}; logits {setting.head}")
         run_setting(
-            model, setting, args.lengths, budget, baseline, print, on_outcome=keep
+            model,
+            setting,
+            args.lengths,
+            budget,
+            baseline,
+            print,
+            on_outcome=keep,
+            reserve=reserve,
         )
     print("")
     print("peak memory per pass (GB, MLX's own count, the weights included)")
