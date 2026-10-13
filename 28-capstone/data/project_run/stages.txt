@@ -1,0 +1,8 @@
+=== 1/5 baseline: the base model in every harness ===
+07:31:00
+=== 2/5 answer-key demonstrations, then supervised fine-tuning ===
+07:52:50
+=== 3/5 evaluate the SFT model ===
+08:03:16
+=== 4/5 GRPO through the training harnesses ===
+08:10:55

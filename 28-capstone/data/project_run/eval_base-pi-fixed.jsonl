@@ -1,0 +1,24 @@
+{"task_id": "airline-easy-001", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 1, "seconds": 22.183656500012148, "timed_out": false}
+{"task_id": "airline-hard-001", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 1, "seconds": 21.991023042006418, "timed_out": false}
+{"task_id": "airline-medium-001", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 1, "seconds": 22.176446541998303, "timed_out": false}
+{"task_id": "clinic-easy-001", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 1, "seconds": 22.22615383399534, "timed_out": false}
+{"task_id": "clinic-hard-001", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 1, "seconds": 23.1170562079933, "timed_out": false}
+{"task_id": "clinic-medium-001", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 1, "seconds": 23.073907832993427, "timed_out": false}
+{"task_id": "airline-easy-002", "harness": "pi", "correct": true, "reason": "correct", "n_calls": 6, "seconds": 66.91765641598613, "timed_out": false}
+{"task_id": "airline-hard-002", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 1, "seconds": 24.504096834018128, "timed_out": false}
+{"task_id": "airline-medium-002", "harness": "pi", "correct": true, "reason": "correct", "n_calls": 5, "seconds": 44.98879004098126, "timed_out": false}
+{"task_id": "clinic-easy-002", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 5, "seconds": 46.0018085000047, "timed_out": false}
+{"task_id": "clinic-hard-002", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 1, "seconds": 18.862572374986485, "timed_out": false}
+{"task_id": "clinic-medium-002", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 1, "seconds": 11.564142249990255, "timed_out": false}
+{"task_id": "airline-easy-003", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 1, "seconds": 12.008138750010403, "timed_out": false}
+{"task_id": "airline-hard-003", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 1, "seconds": 16.020233624993125, "timed_out": false}
+{"task_id": "airline-medium-003", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 1, "seconds": 15.986099208996166, "timed_out": false}
+{"task_id": "clinic-easy-003", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 1, "seconds": 18.581693165993784, "timed_out": false}
+{"task_id": "clinic-hard-003", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 8, "seconds": 83.52644787498866, "timed_out": false}
+{"task_id": "clinic-medium-003", "harness": "pi", "correct": true, "reason": "correct", "n_calls": 6, "seconds": 61.036810833000345, "timed_out": false}
+{"task_id": "airline-easy-004", "harness": "pi", "correct": true, "reason": "correct", "n_calls": 6, "seconds": 61.520844208978815, "timed_out": false}
+{"task_id": "airline-hard-004", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 1, "seconds": 14.223235625016969, "timed_out": false}
+{"task_id": "airline-medium-004", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 1, "seconds": 14.95788254198851, "timed_out": false}
+{"task_id": "clinic-easy-004", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 1, "seconds": 15.531500416982453, "timed_out": false}
+{"task_id": "clinic-hard-004", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 1, "seconds": 12.807271500001661, "timed_out": false}
+{"task_id": "clinic-medium-004", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 1, "seconds": 8.687427166005364, "timed_out": false}

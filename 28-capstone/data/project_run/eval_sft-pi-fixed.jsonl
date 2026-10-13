@@ -1,0 +1,24 @@
+{"task_id": "airline-easy-001", "harness": "pi", "correct": true, "reason": "correct", "n_calls": 5, "seconds": 28.711531209002715, "timed_out": false}
+{"task_id": "airline-hard-001", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 4, "seconds": 20.436937708989717, "timed_out": false}
+{"task_id": "airline-medium-001", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 5, "seconds": 27.791941167000914, "timed_out": false}
+{"task_id": "clinic-easy-001", "harness": "pi", "correct": true, "reason": "correct", "n_calls": 5, "seconds": 28.239060583990067, "timed_out": false}
+{"task_id": "clinic-hard-001", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 5, "seconds": 27.75732970799436, "timed_out": false}
+{"task_id": "clinic-medium-001", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 5, "seconds": 27.061809332983103, "timed_out": false}
+{"task_id": "airline-easy-002", "harness": "pi", "correct": true, "reason": "correct", "n_calls": 5, "seconds": 27.027719416015316, "timed_out": false}
+{"task_id": "airline-hard-002", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 4, "seconds": 23.10599541699048, "timed_out": false}
+{"task_id": "airline-medium-002", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 4, "seconds": 21.233941334008705, "timed_out": false}
+{"task_id": "clinic-easy-002", "harness": "pi", "correct": true, "reason": "correct", "n_calls": 5, "seconds": 26.61812637501862, "timed_out": false}
+{"task_id": "clinic-hard-002", "harness": "pi", "correct": false, "reason": "expected 'Astrid Lindqvist, Gabriel Carter, Paula Nakamura', got 'Erik Hansen, Gabriel Garcia, Paula Sato, Julia Kaur, Julia Ramos, Hugo Okafor, Arjun Carter, Alba Nilsson, Lucas Pereira, Bianca Ito, Dario Becker, Emma Eriksen, Paula Patel, Abigail Marino, Oliver Eriksen, Vera Gomez, Jack Keller, Astrid Russo, Yusuf Lopez, Olga Dalton, Amara Vidal, Aisha Novak, Arjun Russo, Zara Popescu, Paula Patel, Aisha Novak, Omar Jensen, Zoe Duarte, Nico Hoffman, Maja Andersen, Farah Hansen, Paula Patel, Andre Kaur, Rosa Duarte, Sofia Costa, Maja Andersen, Omar Jensen, Th' (0 missing, 39 extra)", "n_calls": 8, "seconds": 52.12947579199681, "timed_out": false}
+{"task_id": "clinic-medium-002", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 4, "seconds": 22.683362540992675, "timed_out": false}
+{"task_id": "airline-easy-003", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 4, "seconds": 21.865896375005832, "timed_out": false}
+{"task_id": "airline-hard-003", "harness": "pi", "correct": false, "reason": "expected '4', got '1'", "n_calls": 6, "seconds": 40.67789558399818, "timed_out": false}
+{"task_id": "airline-medium-003", "harness": "pi", "correct": true, "reason": "correct", "n_calls": 5, "seconds": 37.382661874988116, "timed_out": false}
+{"task_id": "clinic-easy-003", "harness": "pi", "correct": true, "reason": "correct", "n_calls": 4, "seconds": 30.344878041010816, "timed_out": false}
+{"task_id": "clinic-hard-003", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 8, "seconds": 56.17249741699197, "timed_out": false}
+{"task_id": "clinic-medium-003", "harness": "pi", "correct": false, "reason": "expected '523.00', got '493.5'", "n_calls": 6, "seconds": 45.08836033300031, "timed_out": false}
+{"task_id": "airline-easy-004", "harness": "pi", "correct": true, "reason": "correct", "n_calls": 5, "seconds": 41.81406841601711, "timed_out": false}
+{"task_id": "airline-hard-004", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 3, "seconds": 30.75670766600524, "timed_out": false}
+{"task_id": "airline-medium-004", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 4, "seconds": 21.675627250020625, "timed_out": false}
+{"task_id": "clinic-easy-004", "harness": "pi", "correct": true, "reason": "correct", "n_calls": 4, "seconds": 19.12116424998385, "timed_out": false}
+{"task_id": "clinic-hard-004", "harness": "pi", "correct": true, "reason": "correct", "n_calls": 5, "seconds": 22.14958295901306, "timed_out": false}
+{"task_id": "clinic-medium-004", "harness": "pi", "correct": false, "reason": "no answer.txt", "n_calls": 5, "seconds": 20.32727262499975, "timed_out": false}
