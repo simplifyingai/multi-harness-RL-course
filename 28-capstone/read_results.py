@@ -21,6 +21,8 @@ runs before any model does:
    processes' footprint when ``capstone.sh`` sampled it (``memory.tsv``);
 6. **wall time**: the stage clock (``stages.txt``) and the records' own;
 7. **the network check** (``network_check.txt``);
+   and, with ``--against``, this run beside another (the recorded one by
+   default), checkpoint by checkpoint, cell by cell;
 8. **the reading**, worded from the tables above, never typed by hand;
 9. **the article's own numbers**, in a box of their own.
 
@@ -1327,13 +1329,118 @@ def article_box(run: Run, harnesses: list[str]) -> list[str]:
     return lines
 
 
-def report(run: Run, stages_file: Path, train: list[str]) -> str:
+def run_name(run: Run) -> str:
+    """How a run is named in the comparison with another.
+
+    Args:
+        run: The run.
+
+    Returns:
+        ``recorded`` for the project's bundled run, else its folder's name.
+    """
+    bundled = run.folder.resolve() == PROJECT_RUN.resolve()
+    return "recorded" if bundled else run.folder.resolve().name
+
+
+def against_section(run: Run, other: Run, harnesses: list[str]) -> list[str]:
+    """This run beside another, checkpoint by checkpoint, on the cells both ran.
+
+    Two runs of the same code are two draws: the pairs say which differences
+    are beyond noise. Calls per solve is counted on the cells both solved.
+
+    Args:
+        run: This run.
+        other: The run to compare with (the recorded one by default).
+        harnesses: This run's harnesses.
+
+    Returns:
+        Lines.
+    """
+    mine, theirs = run_name(run), run_name(other)
+    width = max(len(mine), len(theirs))
+    lines = [
+        "",
+        f"{RULE} {theirs} against {mine}: the same checkpoint, the same cells",
+        f"  {'checkpoint':<{LABEL}}{'harness':<{NAME}}cells  {theirs:>{width}}  "
+        f"{mine:>{width}}  gained  lost  p      reading  calls on cells both solved",
+    ]
+    for checkpoint in run.checkpoints:
+        match = [c for c in other.checkpoints if c.label == checkpoint.label]
+        if not match:
+            lines.append(f"  {checkpoint.label:<{LABEL}}not in {theirs}")
+            continue
+        for harness in harnesses:
+            lines.append(against_line(match[0], checkpoint, harness, width))
+    lines.append(
+        f"  gained / lost: cells right in {mine} and wrong in {theirs}, and the "
+        "reverse;"
+    )
+    lines.append(
+        f"  p < {SIGNIFICANT:g} reads as beyond noise; calls: mean before -> after "
+        "(cells), and the"
+    )
+    lines.append("  sign test's p on fewer against more")
+    return lines
+
+
+def calls_compared(solved: list[tuple[int, int]]) -> str:
+    """Calls before and after on shared solves, with the sign test's p.
+
+    Args:
+        solved: (calls before, calls after) per cell both solved.
+
+    Returns:
+        Such as ``5.0 -> 7.5 (6), p 0.031``.
+    """
+    if not solved:
+        return "none solved by both"
+    fewer = sum(a < b for b, a in solved)
+    more = sum(a > b for b, a in solved)
+    before = statistics.fmean(b for b, _ in solved)
+    after = statistics.fmean(a for _, a in solved)
+    return f"{before:.1f} -> {after:.1f} ({len(solved)}), p {exact_p(fewer, more):.3f}"
+
+
+def against_line(theirs: Checkpoint, mine: Checkpoint, harness: str, width: int) -> str:
+    """One harness at one checkpoint, two runs compared cell by cell.
+
+    Args:
+        theirs: The other run's checkpoint.
+        mine: This run's checkpoint.
+        harness: The harness.
+        width: The two runs' columns.
+
+    Returns:
+        The line.
+    """
+    before, after = theirs.verdicts(harness), mine.verdicts(harness)
+    shared = sorted(set(before) & set(after))
+    label = f"  {mine.label:<{LABEL}}{harness:<{NAME}}"
+    if not shared:
+        return label + "    0  no cell in both runs"
+    c = compare({t: before[t] for t in shared}, {t: after[t] for t in shared})
+    if not c.flipped:
+        reading = "same"
+    else:
+        reading = "beyond" if c.p_value < SIGNIFICANT else "within"
+    calls = calls_compared(shared_solves(theirs, mine, [harness]))
+    return (
+        label + f"{len(shared):5d}  {sum(before[t] for t in shared):{width}d}  "
+        f"{sum(after[t] for t in shared):{width}d}  {len(c.gained):6d}  "
+        f"{len(c.lost):4d}  {c.p_value:.3f}  {reading:<7}  {calls}"
+    )
+
+
+def report(
+    run: Run, stages_file: Path, train: list[str], other: Run | None = None
+) -> str:
     """Everything this script prints, as one text.
 
     Args:
         run: The run.
         stages_file: The stage clock.
         train: The harnesses the pipeline trained in.
+        other: A run to compare this one with, checkpoint by checkpoint.
 
     Returns:
         The report.
@@ -1353,6 +1460,8 @@ def report(run: Run, stages_file: Path, train: list[str]) -> str:
     lines += time_section(run, stages_file)
     lines += network_section(run.folder)
     lines += reading_section(run, harnesses, train, pairs, gaps)
+    if other is not None:
+        lines += against_section(run, other, harnesses)
     lines += article_box(run, harnesses)
     return "\n".join(lines)
 
@@ -1380,6 +1489,14 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         help=f"the stage clock (default: <run-dir>/{STAGES_FILE})",
     )
     parser.add_argument(
+        "--against",
+        type=Path,
+        nargs="?",
+        const=PROJECT_RUN,
+        default=None,
+        help="compare with another run folder (alone: the project's recorded run)",
+    )
+    parser.add_argument(
         "--train-harnesses",
         default=TRAIN_HARNESSES,
         help="the harnesses the pipeline trained in (the rest are held out)",
@@ -1405,10 +1522,11 @@ def main(argv: list[str] | None = None) -> int:
     train = [name.strip() for name in args.train_harnesses.split(",") if name.strip()]
     try:
         run = read_run(folder)
+        other = read_run(args.against.expanduser()) if args.against else None
     except ValueError as error:  # a broken row: say where, never half a table
-        print(f"cannot read {short_path(folder)}: {error}", file=sys.stderr)
+        print(f"cannot read a run: {error}", file=sys.stderr)
         return 1
-    print(report(run, stages, train))
+    print(report(run, stages, train, other))
     return 0
 
 

@@ -288,3 +288,23 @@ def test_other_harnesses_held_out_follow_the_flag(tmp_path: Path) -> None:
     text = report(read_run(tmp_path), tmp_path / "stages.txt", ["mini-swe-agent"])
     assert "harnesses   claude-code (never trained in)" in text
     assert "claude-code, never trained in: 1 -> 1 solved" in text
+
+
+def test_against_compares_two_runs_cell_by_cell(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert read_results.main(["--against"]) == 0  # the recorded run against itself
+    text = capsys.readouterr().out
+    section = text[text.index("━━ recorded against recorded") :]
+    rows = [line for line in section.splitlines() if line.startswith("  base ")]
+    assert len(rows) == 3 and all(" same " in row for row in rows)
+    write_records(tmp_path, "base", {"airline-easy-001": False})
+    other = read_run(tmp_path)
+    mine = read_run(read_results.PROJECT_RUN)
+    lines = read_results.against_section(other, mine, ["claude-code"])
+    assert (
+        lines[1]
+        == f"━━ recorded against {tmp_path.name}: the same checkpoint, the same cells"
+    )
+    assert re.search(r"base +claude-code +1 +1 +0 +0 +1 +1\.000  within", lines[3])
+    assert "not in recorded" not in "\n".join(lines)
