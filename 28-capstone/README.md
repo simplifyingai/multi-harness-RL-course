@@ -120,7 +120,7 @@ and those are the figures quoted below.
 | 00 | `uv run read_results.py` | the project's recorded run, read | exit 0 · not timed |
 | 01 | `FAST=1 ./capstone.sh all` | the fresh clone, setup, tests, smoke and the pipeline at 6/10/2 | exit 0 · 1,681.8 s · 1.88 GB |
 | 02 | `./capstone.sh start` and `RUN=capstone ./capstone.sh pipeline` | FULL: the pipeline at 24/60/6 in the same clone | exit 0 · 4,533.5 s (the pipeline) · 1.47 GB |
-| 03 | `uv run read_results.py --run-dir .../runs/capstone-fast --against` (and `capstone`) | each fresh run beside the recorded one | exit 0 · not timed |
+| 03 | `uv run read_results.py --run-dir .../runs/capstone-fast --against` (and `capstone`), at `4b4e9f2` | each fresh run beside the recorded one | exit 0 · not timed |
 
 The driver checks beside the run log, not README commands: `article.py`
 (the article's sentences, `00-article.txt`) and `cost.py` (what each call
@@ -466,23 +466,28 @@ rl                      100%             83%              0%             61%
 
 At 6 tasks per harness one task is 16.7 points, and `read_results.py`
 finds no checkpoint pair beyond noise. Beside the recorded run, on the same
-6 tasks:
+6 tasks (each row ends with the cells found in one run only: FAST ran 6 of
+the recorded run's 24 tasks per harness, so 18 are the recorded run's
+alone):
 
 ```text
 ━━ recorded against capstone-fast: the same checkpoint, the same cells
   checkpoint  harness        cells       recorded  capstone-fast  gained  lost  p      reading  calls on cells both solved
-  base        mini-swe-agent     6              6              6       0     0  1.000  same     7.7 -> 7.7 (6), p 1.000
-  base        claude-code        6              5              2       1     4  0.375  within   8.0 -> 8.0 (1), p 1.000
-  base        pi                 6              0              0       0     0  1.000  same     none solved by both
-  sft         mini-swe-agent     6              5              6       1     0  1.000  within   5.2 -> 7.4 (5), p 0.125
-  sft         claude-code        6              5              4       1     2  1.000  within   5.7 -> 7.7 (3), p 0.250
-  sft         pi                 6              2              0       0     2  0.500  within   none solved by both
-  rl          mini-swe-agent     6              6              6       0     0  1.000  same     5.0 -> 7.5 (6), p 0.062
-  rl          claude-code        6              6              5       0     1  1.000  within   4.2 -> 7.8 (5), p 0.062
-  rl          pi                 6              2              0       0     2  0.500  within   none solved by both
+  base        mini-swe-agent     6              6              6       0     0  1.000  same     7.7 -> 7.7 (6), p 1.000, 0 solved in one run only (+18 only in recorded, +0 only in capstone-fast)
+  base        claude-code        6              5              2       1     4  0.375  within   8.0 -> 8.0 (1), p 1.000, 5 solved in one run only (+18 only in recorded, +0 only in capstone-fast)
+  base        pi                 6              0              0       0     0  1.000  same     none solved by both, 0 solved in one run only (+18 only in recorded, +0 only in capstone-fast)
+  sft         mini-swe-agent     6              5              6       1     0  1.000  within   5.2 -> 7.4 (5), p 0.125, 1 solved in one run only (+18 only in recorded, +0 only in capstone-fast)
+  sft         claude-code        6              5              4       1     2  1.000  within   5.7 -> 7.7 (3), p 0.250, 3 solved in one run only (+18 only in recorded, +0 only in capstone-fast)
+  sft         pi                 6              2              0       0     2  0.500  within   none solved by both, 2 solved in one run only (+18 only in recorded, +0 only in capstone-fast)
+  rl          mini-swe-agent     6              6              6       0     0  1.000  same     5.0 -> 7.5 (6), p 0.062, 0 solved in one run only (+18 only in recorded, +0 only in capstone-fast)
+  rl          claude-code        6              6              5       0     1  1.000  within   4.2 -> 7.8 (5), p 0.062, 1 solved in one run only (+18 only in recorded, +0 only in capstone-fast)
+  rl          pi                 6              2              0       0     2  0.500  within   none solved by both, 2 solved in one run only (+18 only in recorded, +0 only in capstone-fast)
   gained / lost: cells right in capstone-fast and wrong in recorded, and the reverse;
-  p < 0.05 reads as beyond noise; calls: mean before -> after (cells), and the
-  sign test's p on fewer against more
+  p < 0.05 reads as beyond noise; calls: mean before -> after (cells), the sign
+  test's p on fewer against more, and how many cells only one run solved
+  recorded: pi for base, sft, rl from eval_<label>-pi-fixed.jsonl: the re-run
+  after chapter 19's sandbox fix (as the project's report)
+  recorded: also holds rl_attempt1, not compared
 ```
 
 FAST took 25 min 26 s of stages and 28 min 2 s with the setup.
@@ -700,23 +705,27 @@ the RL evaluation found nothing leaving the laptop.
 ## Does a fresh clone reproduce the recorded run?
 
 `--against` puts the recorded run beside the fresh one, checkpoint by
-checkpoint, on the same 24 cells per harness:
+checkpoint, on the same 24 cells per harness (every row ends with `+0 only
+in` each run: both ran the same 72 cells at every checkpoint):
 
 ```text
 ━━ recorded against capstone: the same checkpoint, the same cells
   checkpoint  harness        cells  recorded  capstone  gained  lost  p      reading  calls on cells both solved
-  base        mini-swe-agent    24        24        24       0     0  1.000  same     7.8 -> 7.8 (24), p 1.000
-  base        claude-code       24        15         5       2    12  0.013  beyond   8.0 -> 8.0 (3), p 1.000
-  base        pi                24         4         0       0     4  0.125  within   none solved by both
-  sft         mini-swe-agent    24        18        21       5     2  0.453  within   4.6 -> 7.5 (16), p 0.000
-  sft         claude-code       24        17        19       5     3  0.727  within   4.9 -> 7.0 (14), p 0.000
-  sft         pi                24         9         1       0     8  0.008  beyond   4.0 -> 8.0 (1), p 1.000
-  rl          mini-swe-agent    24        20        23       3     0  0.250  within   4.8 -> 7.7 (20), p 0.000
-  rl          claude-code       24        18        20       4     2  0.688  within   4.1 -> 6.9 (16), p 0.000
-  rl          pi                24         9         0       0     9  0.004  beyond   none solved by both
+  base        mini-swe-agent    24        24        24       0     0  1.000  same     7.8 -> 7.8 (24), p 1.000, 0 solved in one run only (+0 only in recorded, +0 only in capstone)
+  base        claude-code       24        15         5       2    12  0.013  beyond   8.0 -> 8.0 (3), p 1.000, 14 solved in one run only (+0 only in recorded, +0 only in capstone)
+  base        pi                24         4         0       0     4  0.125  within   none solved by both, 4 solved in one run only (+0 only in recorded, +0 only in capstone)
+  sft         mini-swe-agent    24        18        21       5     2  0.453  within   4.6 -> 7.5 (16), p 0.000, 7 solved in one run only (+0 only in recorded, +0 only in capstone)
+  sft         claude-code       24        17        19       5     3  0.727  within   4.9 -> 7.0 (14), p 0.000, 8 solved in one run only (+0 only in recorded, +0 only in capstone)
+  sft         pi                24         9         1       0     8  0.008  beyond   4.0 -> 8.0 (1), p 1.000, 8 solved in one run only (+0 only in recorded, +0 only in capstone)
+  rl          mini-swe-agent    24        20        23       3     0  0.250  within   4.8 -> 7.7 (20), p 0.000, 3 solved in one run only (+0 only in recorded, +0 only in capstone)
+  rl          claude-code       24        18        20       4     2  0.688  within   4.1 -> 6.9 (16), p 0.000, 6 solved in one run only (+0 only in recorded, +0 only in capstone)
+  rl          pi                24         9         0       0     9  0.004  beyond   none solved by both, 9 solved in one run only (+0 only in recorded, +0 only in capstone)
   gained / lost: cells right in capstone and wrong in recorded, and the reverse;
-  p < 0.05 reads as beyond noise; calls: mean before -> after (cells), and the
-  sign test's p on fewer against more
+  p < 0.05 reads as beyond noise; calls: mean before -> after (cells), the sign
+  test's p on fewer against more, and how many cells only one run solved
+  recorded: pi for base, sft, rl from eval_<label>-pi-fixed.jsonl: the re-run
+  after chapter 19's sandbox fix (as the project's report)
+  recorded: also holds rl_attempt1, not compared
 ```
 
 Read from that table and the one above:
@@ -863,7 +872,7 @@ table beside ours.
 
 ## The files
 
-Line counts at commit `543f234`: all lines, and the lines of code (no
+Line counts at commit `4b4e9f2`: all lines, and the lines of code (no
 blank lines, comments or docstrings; for the shell scripts, no blank or
 comment lines).
 
@@ -871,11 +880,11 @@ comment lines).
 | --- | ---: | ---: | --- |
 | `capstone.sh` | 534 | 432 | the whole pipeline from a fresh clone: clone, setup, tasks, tests, servers, smoke, the five stages; the watchers (steps, memory, network); `plan` |
 | `stack.sh` | 221 | 163 | chapter 27's: the project's three servers on chosen ports, stopping only its own |
-| `read_results.py` | 1,534 | 812 | a run read honestly: the table with intervals, calls per solve, every pair's gained / lost / p, the harness gap, memory, the clocks, the network check, the reading; `--against` |
+| `read_results.py` | 1,639 | 874 | a run read honestly: the table with intervals, calls per solve, every pair's gained / lost / p, the harness gap, memory, the clocks, the network check, the reading; `--against` |
 | `stats.py` | 142 | 49 | chapter 24's Wilson interval and exact p, cut to what is read here |
 | `paths.py` | 34 | 11 | paths written the short way |
 | `test_28_capstone.py` | 370 | 244 | the pinned plan, the commands against `train_from_scratch.sh`, the guards, the network filter, the pipeline end to end with the teacher as the engine |
-| `test_28_read_results.py` | 310 | 233 | the pinned report, cross-checked against the real `runs/main`; broken, repeated and partial records; `--against` |
+| `test_28_read_results.py` | 441 | 319 | the pinned report, cross-checked against the real `runs/main`; broken, repeated and partial records; `--against` |
 | `capstone_cli_scripted_28.py` | 92 | 49 | the project's CLI with a tiny LFM2 in place of the trainers' model, for the end-to-end test |
 | `data/project_run/` | | | the project's recorded run, slim: evaluation records (no session ids), the trainers' metrics, the network check, the stage banners |
 
