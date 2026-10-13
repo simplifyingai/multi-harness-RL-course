@@ -30,6 +30,7 @@ machine is busy (chapter 24's). Only Python's standard library is needed.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import statistics
 import sys
@@ -59,20 +60,25 @@ from evaluate import (
 )
 from install import HARNESSES, HarnessInstallError
 from lfm_files import chapter_home, short_path
-from noise import Checkpoint, project_checkpoint, show_pairs
+from noise import PROJECT_RUN, Checkpoint, project_checkpoint, show_pairs
 from run_one import PROXY_URL
-from tasks import load_tasks
+from tasks import Task, load_tasks
 from wire import Options
 
 SCRIPT = "quick_eval.py"
 DEFAULT_LIMIT = 8  # tasks per harness: 24 cells per checkpoint
 FAST_LIMIT = 4
-SERVES_MODEL = "lfm2.5-2.6b 4-bit"  # what the model's engine says it serves
+# What the model's engine says it serves: lfm.py's SERVES, kept in step by
+# hand (this script never imports the engine).
+SERVES_MODEL = "lfm2.5-2.6b 4-bit"
 BASE, SFT = "base", "sft"
 PROJECT = "project"  # the project's checkpoints are labelled "project base" ...
 NO_SCRIPT = "none"  # the model writes every reply
 FOLDER = "quick_eval"  # COURSE_HOME/25-sft-in-harnesses/quick_eval/eval_<label>.jsonl
 RECORDS_NAME = "eval_{label}.jsonl"
+FINGERPRINT_NAME = "eval_{label}.adapter.json"  # which adapter made the records
+TRAINING_NOTE = "adapter.json"  # train_sft.py's note beside the adapter
+HASH_CHUNK = 1 << 20
 ADAPTER = Path("sft") / "adapter.safetensors"  # train_sft.py's output
 HTTP_TIMEOUT_S = 120  # a switch waits for the requests queued before it
 HARNESS_COLUMN = 15
@@ -144,6 +150,19 @@ def use_adapter(engine_url: str, adapter: Path | None) -> str:
         said = health.get("adapter")
         raise SystemExit(f"{SCRIPT}: the engine says {said}, not {label}")
     return label
+
+
+def starting_adapter(engine_url: str) -> Path | None:
+    """The adapter the engine samples with now, to put back afterwards.
+
+    Args:
+        engine_url: The engine's root.
+
+    Returns:
+        Its file, or None for the base model.
+    """
+    found = engine_call(engine_url, "/health").get("adapter_path")
+    return Path(found) if found else None
 
 
 def check_engine(engine_url: str) -> None:
@@ -276,7 +295,7 @@ def project_lines(harnesses: list[str]) -> list[str]:
     old = average_calls(summarize(list(base.records), harnesses), harnesses)
     new = average_calls(summary, harnesses)
     return [
-        "its run of 2026-10-06: 24 held-out tasks per harness, other cells",
+        f"{PROJECT_RUN}: 24 held-out tasks per harness, other cells",
         f"sft pass@1 ({' / '.join(harnesses)}): {scores}",
         f"calls per solve, averaged over harnesses: base {old:.1f} -> sft {new:.1f}",
         "(solved cells only, so compare with care)",
@@ -293,10 +312,106 @@ def print_heading(title: str) -> None:
     print(f"{RULE} {title}")
 
 
+def fingerprint(adapter: Path | None) -> dict[str, Any]:
+    """Name an adapter by its content, so records always say which one made them.
+
+    Args:
+        adapter: The adapter file, or None for the base model.
+
+    Returns:
+        ``{"adapter", "sha256", "bytes"}`` (``{"adapter": "base"}`` for none).
+    """
+    if adapter is None:
+        return {"adapter": BASE}
+    digest = hashlib.sha256()
+    with adapter.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(HASH_CHUNK), b""):
+            digest.update(chunk)
+    return {
+        "adapter": short_path(adapter),
+        "sha256": digest.hexdigest(),
+        "bytes": adapter.stat().st_size,
+    }
+
+
+def check_fingerprint(label: str, adapter: Path | None, kept: list[Record]) -> None:
+    """Refuse to add cells to records another adapter made; note this one's.
+
+    Args:
+        label: ``base`` or ``sft``.
+        adapter: The adapter this run uses.
+        kept: Records already in the file (``--resume``).
+
+    Raises:
+        SystemExit: If records exist and were made by another adapter, or
+            nothing says which adapter made them.
+    """
+    path = records_path(label).with_name(FINGERPRINT_NAME.format(label=label))
+    mine = fingerprint(adapter)
+    if kept:
+        try:
+            theirs = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            theirs = None
+        if theirs != mine:
+            raise SystemExit(
+                f"{SCRIPT}: {short_path(records_path(label))} was made with "
+                f"{(theirs or {}).get('adapter', 'an adapter nothing names')}, "
+                f"not {mine['adapter']} as it is now: move the records away to "
+                "measure this one"
+            )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(mine, indent=2) + "\n", encoding="utf-8")
+
+
+def missing_cells(
+    records: list[Record], tasks: list[Task], harnesses: list[str]
+) -> list[str]:
+    """The cells a checkpoint should have run and has no record of.
+
+    Args:
+        records: Its records.
+        tasks: The tasks.
+        harnesses: The harnesses.
+
+    Returns:
+        ``"<harness> <task>"`` for each missing cell.
+    """
+    have = {r.cell for r in records}
+    return [
+        f"{h} {t.task_id}"
+        for h in harnesses
+        for t in tasks
+        if (h, t.task_id) not in have
+    ]
+
+
+def training_note(adapter: Path) -> str:
+    """What train_sft.py noted beside the adapter: the build, the rows, the steps.
+
+    Args:
+        adapter: The adapter file.
+
+    Returns:
+        One line, or a line saying there is no note.
+    """
+    note = adapter.with_name(TRAINING_NOTE)
+    try:
+        data = json.loads(note.read_text(encoding="utf-8"))
+        return (
+            f"trained on {data['model']} ({data['which']}) · {data['rows']} rows · "
+            f"{data['steps']} steps at lr {data['lr']:g}"
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return (
+            f"no readable {TRAINING_NOTE} beside it: which build trained it is unknown"
+        )
+
+
 def run_checkpoint(
     label: str,
     adapter: Path | None,
-    tasks: list[Any],
+    tasks: list[Task],
     harnesses: list[str],
     setup: CellSetup,
     args: argparse.Namespace,
@@ -318,11 +433,13 @@ def run_checkpoint(
 
     Raises:
         SystemExit: If the engine refuses the adapter, or the records file
-            exists without ``--resume`` (or holds another harness version).
+            exists without ``--resume`` (or holds another harness version,
+            or was made with another adapter).
     """
     out_file = records_path(label)
     kept = kept_records(out_file, args.resume)
     refuse_other_versions(kept, versions)
+    check_fingerprint(label, adapter, kept)
     using = use_adapter(setup.engine_url, adapter)
     print_heading(f"{label}: the engine samples with {using}")
     print(f"  records   {short_path(out_file)}")
@@ -410,7 +527,7 @@ def report(
     theirs = [project_checkpoint(label) for label in (BASE, SFT)]
     named = [Checkpoint(f"{PROJECT} {c.label}", c.records) for c in theirs]
     show_pairs([(named[0], named[1])], say)
-    say("  (the project's pair is its run of 2026-10-06, from its bundled records)")
+    say(f"  (the project's pair is {PROJECT_RUN}, from its bundled records)")
     say("")
     for line in boxed("the project's recorded SFT row", project_lines(harnesses)):
         say(line)
@@ -421,8 +538,9 @@ def main() -> None:
 
     Raises:
         SystemExit: If the stack is down or not the model, the adapter is
-            missing, a harness is refused, or (status 1) a run's network
-            watch saw more than this machine.
+            missing, a harness is refused, the two checkpoints do not cover
+            the same cells, or (status 1) a run's network watch saw more
+            than this machine.
     """
     args = parse_args()
     started = time.perf_counter()
@@ -444,6 +562,7 @@ def main() -> None:
         f"database x difficulty · harnesses {', '.join(args.harnesses)}"
     )
     print(f"  adapter   {short_path(adapter)}")
+    print(f"            {training_note(adapter)}")
     print(f"  engine    {engine_url} (the model) · proxy {args.proxy_url}")
     print("versions")
     try:
@@ -451,12 +570,31 @@ def main() -> None:
     except HarnessInstallError as error:
         raise SystemExit(f"REFUSED · {error}") from error
     setup = CellSetup(client, args.proxy_url, engine_url, NO_SCRIPT, BASE, versions)
-    before = run_checkpoint(BASE, None, tasks, args.harnesses, setup, args, versions)
-    after = run_checkpoint(SFT, adapter, tasks, args.harnesses, setup, args, versions)
-    use_adapter(engine_url, None)  # leave the engine as it was started
+    found = starting_adapter(engine_url)
+    try:
+        before = run_checkpoint(
+            BASE, None, tasks, args.harnesses, setup, args, versions
+        )
+        after = run_checkpoint(
+            SFT, adapter, tasks, args.harnesses, setup, args, versions
+        )
+    finally:  # on every way out, the engine samples with what it had before
+        try:
+            put_back = use_adapter(engine_url, found)
+            print(f"the engine is back on {put_back}, as it was found")
+        except SystemExit as error:  # never hide the error that brought us here
+            print(f"the engine was NOT put back: {error}", file=sys.stderr)
+    gaps = {
+        label: missing_cells(records, tasks, args.harnesses)
+        for label, records in ((BASE, before), (SFT, after))
+    }
+    if any(gaps.values()):
+        for label, cells in gaps.items():
+            print(f"{label} has no record of {len(cells)} cells: {', '.join(cells)}")
+        raise SystemExit(f"{SCRIPT}: both checkpoints must cover the same cells")
     report(before, after, args.harnesses)
     minutes, rest = divmod(round(time.perf_counter() - started), 60)
-    print(f"this run took {minutes} min {rest} s · the engine is back on base")
+    print(f"this run took {minutes} min {rest} s")
     outside = [r for r in before + after if r.loopback_only is False]
     if outside:
         cells = ", ".join(f"{r.engine} {r.harness} {r.task_id}" for r in outside)

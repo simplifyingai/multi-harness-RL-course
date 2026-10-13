@@ -61,7 +61,7 @@ from baseline_eval import check_harness
 from capture_client import PURPOSE_TRAIN, CaptureClient, ProxyError
 from evaluate import STATE_PREFIX, balanced, drop_torn_tail, keep_log, stop_label
 from grader import grade
-from install import CLAUDE, HARNESSES, MINI, HarnessInstallError
+from install import CLAUDE, MINI, HarnessInstallError
 from lfm_files import (
     MAX_CALLS,
     TokenizerMissingError,
@@ -84,6 +84,8 @@ from teacher import pattern_of
 from wire import Options, RunFolders, Wiring, wire
 
 TRAIN_HARNESSES = (MINI, CLAUDE)  # the project's TRAIN_HARNESSES; Pi is held out
+# The next three are engine.py's (ORACLE_PORT, SERVED_MODEL, SERVES_TEACHER):
+# this script never imports the engine, so keep them in step by hand.
 ORACLE_URL = "http://127.0.0.1:8101"  # the project's teacher port
 SERVED_MODEL = "lfm2.5-2.6b"  # the name the teacher's engine answers to
 SERVES_TEACHER = "answer-key teacher"  # what its /health says it serves
@@ -96,6 +98,7 @@ DEMOS_FILE = "demos.jsonl"
 HTTP_TIMEOUT_S = 10
 HARNESS_COLUMN = 14
 TASK_COLUMN = 19  # "library-medium-001" and a space
+VERDICT_COLUMN = 11  # "untrainable"
 MASK_READ, MASK_TRAINED = 0, 1
 SHOWN_CHARS = 150  # a long harness segment shows its start and its end
 TEACHER_CHARS = 400  # a teacher segment is shown whole up to this
@@ -316,6 +319,8 @@ def collect_in(
         PURPOSE_TRAIN, labels, MAX_CALLS, llm_url=setup.oracle_url, model=SERVED_MODEL
     )
     wiring: Wiring | None = None
+    # process, verdict, document and log are set inside this block; any
+    # error in it leaves the function, so below they always exist.
     try:
         wiring = wire(
             harness,
@@ -417,18 +422,34 @@ def demo_line(index: int, total: int, record: DemoRecord) -> str:
     """
     width = len(str(total))
     if record.usable:
-        verdict = "usable "
+        verdict = "usable"
     else:
-        verdict = "wrong  " if not record.correct else "untrainable"
+        verdict = "wrong" if not record.correct else "untrainable"
     rows = len(record.sequences)
     tokens = sum(len(row["input_ids"]) for row in record.sequences)
     return (
         f"[{index:>{width}}/{total}] {record.harness:<{HARNESS_COLUMN}} "
-        f"{record.task_id:<{TASK_COLUMN}}{verdict} · {record.n_calls} calls · "
+        f"{record.task_id:<{TASK_COLUMN}}{verdict:<{VERDICT_COLUMN}} · "
+        f"{record.n_calls} calls · "
         f"path {record.path:<6} · {rows} row{'' if rows == 1 else 's'}, "
         f"{tokens:,} tokens, {record.n_trainable_tokens:,} trained · "
         f"{record.seconds:5.1f} s · {record.stop}"
     )
+
+
+@dataclass(frozen=True)
+class Failure:
+    """A demonstration that produced no record, and why.
+
+    Attributes:
+        task_id: The task.
+        harness: The harness.
+        reason: The error, or why it was not run.
+    """
+
+    task_id: str
+    harness: str
+    reason: str
 
 
 def collect(
@@ -437,8 +458,12 @@ def collect(
     out_file: Path,
     concurrency: int,
     say: Callable[[str], None] = print,
-) -> list[DemoRecord]:
+) -> tuple[list[DemoRecord], list[Failure]]:
     """Run the demonstrations, ``concurrency`` at a time, appending each as it ends.
+
+    A rollout that fails gets a ``FAILED`` line and no record (``--resume``
+    runs it again). When the proxy itself fails, every rollout not yet
+    started is skipped and said so, instead of failing one after another.
 
     Args:
         jobs: ``(task, harness)`` pairs still to run.
@@ -448,28 +473,53 @@ def collect(
         say: Where progress lines go.
 
     Returns:
-        The records this call made, in the order they ended.
+        The records this call made, in the order they ended, and the
+        demonstrations that made none.
     """
     lock = threading.Lock()
+    proxy_down = threading.Event()
     made: list[DemoRecord] = []
+    failed: list[Failure] = []
+
+    def fail(task: Task, harness: str, reason: str) -> None:
+        """Keep and print one demonstration that made no record.
+
+        Args:
+            task: The task.
+            harness: The harness.
+            reason: Why.
+        """
+        with lock:
+            failed.append(Failure(task.task_id, harness, reason))
+            say(f"FAILED {harness} {task.task_id}: {reason}")
 
     def one(numbered: tuple[int, tuple[Task, str]]) -> None:
-        """Run one demonstration and keep its record.
+        """Run one demonstration and keep its record, or its failure.
 
         Args:
             numbered: Its number, and its (task, harness).
         """
         index, (task, harness) = numbered
-        record = collect_one(task, harness, setup)
+        if proxy_down.is_set():
+            fail(task, harness, "not run: the proxy failed earlier")
+            return
+        try:
+            record = collect_one(task, harness, setup)
+        except ProxyError as error:
+            proxy_down.set()
+            fail(task, harness, tilde(str(error)))
+            return
+        except (OSError, HarnessInstallError) as error:
+            fail(task, harness, tilde(str(error)))
+            return
         with lock:  # one writer at a time: whole lines, in the order they end
             append_record(out_file, record)
             made.append(record)
             say(demo_line(index, len(jobs), record))
 
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
-        # list() re-raises the first error a demonstration raised.
         list(pool.map(one, enumerate(jobs, start=1)))
-    return made
+    return made, failed
 
 
 def segments(row: dict[str, Any]) -> list[Segment]:
@@ -501,10 +551,16 @@ def scrub(text: str) -> str:
         text: Decoded tokens.
 
     Returns:
-        The text, the home folder as ``~`` and any other mention of your
-        user name as ``<you>``, newlines written ``\\n``.
+        The text, the home folder as ``~``, your user name as ``<you>``
+        where a path still carries it (Claude Code spells its project
+        folder ``-Users-<name>-...``), newlines written ``\\n``.
     """
-    return tilde(text).replace(Path.home().name, YOUR_NAME).replace("\n", "\\n")
+    user = Path.home().name
+    text = tilde(text)
+    # Only inside paths: a short user name could be part of ordinary words.
+    for before, after in (("/", "/"), ("-", "-")):
+        text = text.replace(f"{before}{user}{after}", f"{before}{YOUR_NAME}{after}")
+    return text.replace("\n", "\\n")
 
 
 def shown(text: str, limit: int) -> str:
@@ -609,8 +665,9 @@ def teacher_health(url: str) -> dict[str, Any]:
             f"no teacher answers on {url}: start it with ./start.sh oracle "
             f"(and --oracle-url if it is on another port) · {error}"
         ) from error
-    if health.get("serves") != SERVES_TEACHER:
-        served = health.get("serves") or health.get("model") or "something else"
+    if not isinstance(health, dict) or health.get("serves") != SERVES_TEACHER:
+        known = health if isinstance(health, dict) else {}
+        served = known.get("serves") or known.get("model") or "something else"
         raise SystemExit(f"{url} serves {served}, not the {SERVES_TEACHER}")
     return health
 
@@ -625,13 +682,17 @@ def harness_list(value: str) -> list[str]:
         The harnesses.
 
     Raises:
-        argparse.ArgumentTypeError: For an unknown name or an empty list.
+        argparse.ArgumentTypeError: For a name that is not a training
+            harness, or an empty list.
     """
     names = [name.strip() for name in value.split(",") if name.strip()]
-    unknown = [name for name in names if name not in HARNESSES]
+    # Pi is held out: a demonstration in it would be trained on, and its
+    # evaluation would no longer test a harness the model never saw.
+    unknown = [name for name in names if name not in TRAIN_HARNESSES]
     if not names or unknown:
         raise argparse.ArgumentTypeError(
-            f"choose from {', '.join(HARNESSES)} (got {value!r})"
+            f"choose from the training harnesses {', '.join(TRAIN_HARNESSES)} "
+            f"(got {value!r}; Pi is held out)"
         )
     return names
 
@@ -716,7 +777,9 @@ def main() -> None:
     Raises:
         SystemExit: If the teacher or the proxy is down, a harness is
             refused, or the demonstrations file already exists without
-            ``--resume``.
+            ``--resume``; and with status 1 after the report when a
+            demonstration is unusable or failed, or a rollout's network
+            watch saw more than this machine.
     """
     args = parse_args()
     started = time.perf_counter()
@@ -757,12 +820,18 @@ def main() -> None:
     ]
     heading = f"demonstrations ({len(done)} already recorded)" if done else ""
     print(heading or "demonstrations")
-    collect(jobs, setup, out_file, args.concurrency)
+    _, failed = collect(jobs, setup, out_file, args.concurrency)
+    # Read back from the file: a resumed run's earlier records count too.
     wanted = {(h, t.task_id) for t in tasks for h in args.harnesses}
     records = [r for r in read_demos(out_file) if (r.harness, r.task_id) in wanted]
     good = sum(1 for r in records if r.usable)
     print("")
     print(f"[demos] {good}/{len(records)} demonstrations usable")
+    if failed:
+        print(
+            f"  {len(failed)} demonstrations made no record (FAILED above): "
+            "--resume runs them again"
+        )
     for line in summary_lines(records, args.harnesses):
         print(line)
     minutes, rest = divmod(round(time.perf_counter() - started), 60)
@@ -784,7 +853,7 @@ def main() -> None:
         print("LFM2.5's tokenizer is not on disk, so no row is decoded")
     else:
         show_row(shown_record, decode)
-    if good < len(records) or outside:
+    if good < len(records) or outside or failed:
         sys.exit(1)
 
 

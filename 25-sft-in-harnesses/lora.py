@@ -108,11 +108,19 @@ def check_adapter_file(model: nn.Module, path: Path) -> None:
 
     Raises:
         FileNotFoundError: If the file does not exist.
-        ValueError: If its arrays' names or shapes differ from the model's.
+        ValueError: If it cannot be read, or its arrays' names, shapes or
+            types differ from the model's.
     """
     if not path.is_file():
         raise FileNotFoundError(path)
-    saved = mx.load(str(path))
+    try:
+        saved = mx.load(str(path))
+    except (RuntimeError, OSError, ValueError) as error:  # not a safetensors file
+        raise ValueError(
+            f"{path.name} cannot be read as an adapter: {error}"
+        ) from error
+    if not isinstance(saved, dict):  # a .npy file holds one array, not a set
+        raise ValueError(f"{path.name} holds one array, not an adapter's set")
     expected = adapter_weights(model)
     if set(saved) != set(expected):
         raise ValueError(
@@ -123,6 +131,10 @@ def check_adapter_file(model: nn.Module, path: Path) -> None:
         if array.shape != expected[name].shape:
             raise ValueError(
                 f"{path.name}: {name} is {array.shape}, not {expected[name].shape}"
+            )
+        if array.dtype != expected[name].dtype:
+            raise ValueError(
+                f"{path.name}: {name} is {array.dtype}, not {expected[name].dtype}"
             )
 
 

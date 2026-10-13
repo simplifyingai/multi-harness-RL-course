@@ -51,6 +51,7 @@ import os
 import random
 import re
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -95,12 +96,15 @@ MIB = 1024**2
 PROBE_FOLDER = "memory_probe"
 RESULTS_FILE = "results.json"
 ENGINE_PID = Path("run") / "engine.pid"  # start.sh's record of the engine
+COMMAND_SUFFIX = ".cmd"  # ...and of the command it started (run/engine.cmd)
+PS = "/bin/ps"
 VM_STAT = "/usr/bin/vm_stat"
 PAGE_SIZE_RE = re.compile(r"page size of (\d+) bytes")
 FREE_KINDS = ("Pages free", "Pages inactive", "Pages speculative", "Pages purgeable")
 NAME_COLUMN = 12
 CELL_COLUMN = 9
 NO_MEASUREMENT = "before any pass: a generous count of the arrays it makes"
+FAILED_PREFIX = "failed:"  # a pass that ran and raised, as opposed to refused
 
 
 @dataclass(frozen=True)
@@ -320,6 +324,8 @@ def project(
     """
     if not history:
         return first_bound(setting, length, baseline, shape), NO_MEASUREMENT
+    # The lengths run shortest first (length_list sorts them), so the last
+    # pass is shorter and the factor is above 1: a projection never shrinks.
     last_length, last_peak = history[-1]
     factor = (length / last_length) ** setting.growth
     above = max(last_peak - baseline, 0.0)
@@ -416,6 +422,10 @@ def free_bytes(read: Callable[[], str] | None = None) -> float | None:
 def engine_running(home: Path) -> int | None:
     """The pid of this chapter's engine, if start.sh's record names a live one.
 
+    Only the engine this chapter's ``start.sh`` started is known here; any
+    other program holding memory (another engine, a film render) is covered
+    by the free-memory refusal instead.
+
     Args:
         home: The chapter's folder under COURSE_HOME.
 
@@ -425,9 +435,26 @@ def engine_running(home: Path) -> int | None:
     record = home / ENGINE_PID
     try:
         pid = int(record.read_text().strip())
-        os.kill(pid, 0)  # signal 0 checks that it exists, and sends nothing
     except (OSError, ValueError):
         return None
+    try:
+        os.kill(pid, 0)  # signal 0 checks that it exists, and sends nothing
+    except ProcessLookupError:
+        return None
+    except PermissionError:
+        pass  # it exists: another user's process
+    # After a reboot the pid may belong to another program: start.sh keeps
+    # the command it started beside the pid, so compare the two.
+    command = record.with_suffix(COMMAND_SUFFIX)
+    if command.is_file():
+        now = subprocess.run(
+            [PS, "-o", "command=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+        if now != command.read_text().strip():
+            return None
     return pid
 
 
@@ -483,6 +510,7 @@ def run_setting(
     baseline: float,
     say: Callable[[str], None],
     free: Callable[[], float | None] | None = None,
+    on_outcome: Callable[[Outcome], None] | None = None,
 ) -> list[Outcome]:
     """Run one setting over the lengths, shortest first, refusing what will not fit.
 
@@ -494,12 +522,14 @@ def run_setting(
         baseline: Bytes held before any pass (weights and adapter).
         say: Where lines go.
         free: Reads the machine's free bytes (``free_bytes`` when None).
+        on_outcome: Called with each cell as it ends (main saves it at once).
 
     Returns:
         One outcome per length.
     """
     shape = shape_of(model)
     read_free = free or free_bytes
+    failed = 0  # the length whose pass failed, if one did
     history: list[tuple[int, float]] = []
     outcomes = []
     for length in lengths:
@@ -513,6 +543,8 @@ def run_setting(
         )
         held = float(mx.get_active_memory())
         outcome.refused = refusal(setting, length, projected, budget, read_free(), held)
+        if failed and not outcome.refused:  # a longer row would fail too
+            outcome.refused = f"not run: the {failed:,}-token pass failed"
         tag = f"[{setting.name:<{NAME_COLUMN - 1}} {length:>6,}]"
         if outcome.refused:
             note = ""
@@ -520,15 +552,23 @@ def run_setting(
                 note = f" · the project measured {outcome.recorded_gb} GB here"
             say(f"{tag} refused · {outcome.refused}{note}")
         else:
-            peak, seconds = one_pass(model, probe_row(length, shape.vocab), setting)
-            outcome.peak_gb = round(peak / GIGABYTE, 2)
-            outcome.seconds = round(seconds, 1)
-            history.append((length, peak))
-            say(
-                f"{tag} projected {projected / GIGABYTE:.1f} GB ({basis}) · peak "
-                f"{peak / GIGABYTE:.2f} GB · {seconds:.1f} s"
-            )
+            try:
+                peak, seconds = one_pass(model, probe_row(length, shape.vocab), setting)
+            except RuntimeError as error:  # Metal refused an allocation, say
+                failed = length
+                outcome.refused = f"{FAILED_PREFIX} {error}"
+                say(f"{tag} FAILED · {error}")
+            else:
+                outcome.peak_gb = round(peak / GIGABYTE, 2)
+                outcome.seconds = round(seconds, 1)
+                history.append((length, peak))
+                say(
+                    f"{tag} projected {projected / GIGABYTE:.1f} GB ({basis}) · "
+                    f"peak {peak / GIGABYTE:.2f} GB · {seconds:.1f} s"
+                )
         outcomes.append(outcome)
+        if on_outcome is not None:
+            on_outcome(outcome)
     return outcomes
 
 
@@ -539,10 +579,12 @@ def cell(outcome: Outcome) -> str:
         outcome: The cell's outcome.
 
     Returns:
-        Such as ``2.31 GB``, ``refused`` or ``11.9*``.
+        Such as ``2.31 GB``, ``refused``, ``failed`` or ``11.9*``.
     """
     if outcome.peak_gb is not None:
         return f"{outcome.peak_gb:.2f} GB"
+    if outcome.refused.startswith(FAILED_PREFIX):
+        return "failed"
     if outcome.recorded_gb is not None:
         return f"{outcome.recorded_gb}*"
     return "refused"
@@ -673,7 +715,8 @@ def main() -> None:
 
     Raises:
         SystemExit: If this chapter's engine is running, or the budget is
-            not above 0.
+            not above 0; and with status 1 after the report when no row
+            could be measured.
     """
     args = parse_args()
     if args.budget_gb <= 0:
@@ -712,10 +755,22 @@ def main() -> None:
         f"machine free now {free_text}"
     )
     probe = Probe(short_path(folder), args.budget_gb, round(baseline / GIGABYTE, 2))
+    out = home / PROBE_FOLDER / RESULTS_FILE
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    def keep(outcome: Outcome) -> None:
+        """Add a cell to the results and write them at once.
+
+        Args:
+            outcome: The cell.
+        """
+        probe.outcomes.append(outcome)
+        out.write_text(json.dumps(asdict(probe), indent=2) + "\n", encoding="utf-8")
+
     for setting in args.settings:
         print(f"{setting.name}: attention {setting.attention}; logits {setting.head}")
-        probe.outcomes += run_setting(
-            model, setting, args.lengths, budget, baseline, print
+        run_setting(
+            model, setting, args.lengths, budget, baseline, print, on_outcome=keep
         )
     print("")
     print("peak memory per pass (GB, MLX's own count, the weights included)")
@@ -724,10 +779,10 @@ def main() -> None:
     print("")
     for line in project_box():
         print(line)
-    out = home / PROBE_FOLDER / RESULTS_FILE
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(asdict(probe), indent=2) + "\n", encoding="utf-8")
     print(f"results   {short_path(out)}")
+    if not any(o.peak_gb is not None for o in probe.outcomes):
+        print("nothing was measured: every row was refused or failed")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

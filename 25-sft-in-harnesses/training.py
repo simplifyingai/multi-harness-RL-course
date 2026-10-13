@@ -91,7 +91,9 @@ class DemoRows:
     empty: int
 
 
-def item_from_sequence(sequence: dict, advantage: float = 1.0) -> TrainItem | None:
+def item_from_sequence(
+    sequence: dict[str, Any], advantage: float = 1.0
+) -> TrainItem | None:
     """Turn one captured sequence into a training row.
 
     Args:

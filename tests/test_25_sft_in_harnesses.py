@@ -453,7 +453,14 @@ def test_the_adapter_route_switches_and_drops_every_cache(tmp_path: Path) -> Non
     adapter.write_bytes(b"x")
     switched = client.post("/admin/adapter", json={"path": str(adapter)})
     assert switched.json() == {"adapter": "adapter.safetensors"}
-    assert core.caches == [] and client.get("/health").json()["adapter"] == adapter.name
+    health = client.get("/health").json()
+    assert core.caches == [] and health["adapter"] == adapter.name
+    assert health["adapter_path"] == str(adapter)  # what a caller puts back
+    for wrong in ({}, {"pth": str(adapter)}, []):  # never quietly "base"
+        refused = client.post("/admin/adapter", json=wrong)
+        message = refused.json()["error"]["message"]
+        assert refused.status_code == 400 and message == engine.ADAPTER_SHAPE
+    assert client.get("/health").json()["adapter"] == adapter.name
     assert client.post("/admin/adapter", json={"path": None}).json() == {
         "adapter": "base"
     }
@@ -462,6 +469,7 @@ def test_the_adapter_route_switches_and_drops_every_cache(tmp_path: Path) -> Non
     assert client.post("/admin/adapter", json={"path": 3}).status_code == 400
     assert client.post("/admin/adapter", content=b"not json").status_code == 400
     assert client.get("/health").json()["adapter"] == "base"
+    assert client.get("/health").json()["adapter_path"] is None
 
 
 def test_oracle_mode_takes_no_flag_that_needs_weights(
@@ -609,7 +617,9 @@ def test_a_long_segment_shows_its_start_and_its_end() -> None:
     text = "a" * 100 + "b" * 100
     assert collect.shown(text, 150) == "a" * 75 + " … " + "b" * 75
     assert collect.shown("short", 150) == "short"
-    assert collect.scrub(f"{Path.home()}/f and {Path.home().name}") == "~/f and <you>"
+    user = Path.home().name
+    said = collect.scrub(f"{Path.home()}/f, -Users-{user}-x, /p/{user}/q, a{user}b")
+    assert said == f"~/f, -Users-<you>-x, /p/<you>/q, a{user}b"  # paths only
 
 
 def test_records_round_trip_and_a_broken_line_is_named(tmp_path: Path) -> None:
@@ -646,7 +656,7 @@ def test_the_summary_says_rows_calls_and_the_trained_share() -> None:
 def test_a_progress_line_says_usable_calls_path_and_rows() -> None:
     record = collect.DemoRecord(**captured()[0])
     line = collect.demo_line(1, 4, record)
-    assert line.startswith("[1/4] mini-swe-agent library-easy-001   usable  · 4 calls")
+    assert line.startswith("[1/4] mini-swe-agent library-easy-001   usable      · 4")
     assert "path tables · 1 row, 794 tokens, 147 trained" in line
     assert "untrainable" in collect.demo_line(1, 4, replace(record, trainable=False))
 
@@ -693,14 +703,44 @@ def test_collect_refuses_an_engine_that_is_not_the_teacher(
         collect.teacher_health("http://127.0.0.1:1")
 
 
-def test_collect_refuses_an_unknown_harness(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(sys, "argv", ["collect.py", "--harnesses", "cursor"])
-    with pytest.raises(SystemExit):
-        collect.parse_args()
+def test_collect_refuses_an_unknown_or_held_out_harness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for wrong in ("cursor", "pi", "mini-swe-agent,pi"):
+        monkeypatch.setattr(sys, "argv", ["collect.py", "--harnesses", wrong])
+        with pytest.raises(SystemExit):
+            collect.parse_args()
     monkeypatch.setattr(sys, "argv", ["collect.py", "--fast"])
     args = collect.parse_args()
     assert args.limit == 10 and args.harnesses == ["mini-swe-agent", "claude-code"]
     assert args.concurrency == 4
+
+
+def test_a_failed_rollout_is_said_and_a_dead_proxy_stops_the_rest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    good = collect.DemoRecord(**captured()[0])
+
+    def flaky(task: tasks.Task, harness: str, setup: Any) -> collect.DemoRecord:
+        if task.task_id == TRAIN[1].task_id:
+            raise OSError("the harness would not start")
+        if task.task_id == TRAIN[2].task_id:
+            raise collect.ProxyError("cannot reach the proxy")
+        return replace(good, task_id=task.task_id, harness=harness)
+
+    monkeypatch.setattr(collect, "collect_one", flaky)
+    jobs = [(task, "claude-code") for task in TRAIN[:5]]
+    lines: list[str] = []
+    out = tmp_path / "demos.jsonl"
+    made, failed = collect.collect(jobs, None, out, 1, lines.append)  # type: ignore[arg-type]
+    assert [r.task_id for r in made] == [TRAIN[0].task_id]
+    reasons = {f.task_id: f.reason for f in failed}
+    assert reasons[TRAIN[1].task_id] == "the harness would not start"
+    assert reasons[TRAIN[2].task_id] == "cannot reach the proxy"
+    for task in TRAIN[3:5]:
+        assert reasons[task.task_id] == "not run: the proxy failed earlier"
+    assert sum(line.startswith("FAILED claude-code") for line in lines) == 4
+    assert len(collect.read_demos(out)) == 1  # only what ran is on disk
 
 
 # ------------------------------------------------------------------ quick_eval
@@ -745,6 +785,58 @@ def test_quick_eval_refuses_the_teacher_and_checks_each_switch(
     answers["/health"] = {"serves": quick_eval.SERVES_MODEL, "adapter": "base"}
     with pytest.raises(SystemExit, match="says base"):
         quick_eval.use_adapter("http://e", Path("a.safetensors"))
+
+
+def test_resume_refuses_records_another_adapter_made(tmp_path: Path) -> None:
+    first, second = tmp_path / "a.safetensors", tmp_path / "b.safetensors"
+    first.write_bytes(b"one")
+    second.write_bytes(b"two")
+    kept = [evaluate.Record(task_id="t", harness="pi", engine="sft")]
+    quick_eval.check_fingerprint("sft", first, [])
+    quick_eval.check_fingerprint("sft", first, kept)  # the same adapter: fine
+    with pytest.raises(SystemExit, match="was made with"):
+        quick_eval.check_fingerprint("sft", second, kept)
+    quick_eval.records_path("sft").with_name("eval_sft.adapter.json").unlink()
+    with pytest.raises(SystemExit, match="an adapter nothing names"):
+        quick_eval.check_fingerprint("sft", first, kept)
+
+
+def test_a_failed_run_puts_the_engines_adapter_back_and_gaps_are_refused(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any, course_home: Path
+) -> None:
+    adapter = course_home / "25-sft-in-harnesses" / "sft" / "adapter.safetensors"
+    adapter.parent.mkdir(parents=True)
+    adapter.write_bytes(b"x")
+    switches: list[Path | None] = []
+
+    class Health:
+        def health(self) -> dict[str, str]:
+            return {"upstream": "http://engine"}
+
+    monkeypatch.setattr(quick_eval, "CaptureClient", lambda url: Health())
+    monkeypatch.setattr(quick_eval, "check_engine", lambda url: None)
+    monkeypatch.setattr(quick_eval, "check_harness", lambda *a: "pinned")
+    monkeypatch.setattr(quick_eval, "starting_adapter", lambda url: Path("/s.st"))
+    monkeypatch.setattr(
+        quick_eval, "use_adapter", lambda url, path: switches.append(path) or "x"
+    )
+
+    def broken(label: str, *args: Any) -> list[evaluate.Record]:
+        raise RuntimeError("a harness crashed")
+
+    monkeypatch.setattr(quick_eval, "run_checkpoint", broken)
+    with pytest.raises(RuntimeError, match="a harness crashed"):
+        run_main(quick_eval, ["quick_eval.py", "--fast"], monkeypatch, capsys)
+    assert switches == [Path("/s.st")]  # put back what it found
+
+    def partial(label: str, *args: Any) -> list[evaluate.Record]:
+        cell = evaluate.Record(task_id=TEST[0].task_id, harness="pi")
+        return [cell] if label == "base" else []
+
+    monkeypatch.setattr(quick_eval, "run_checkpoint", partial)
+    with pytest.raises(SystemExit, match="must cover the same cells"):
+        run_main(quick_eval, ["quick_eval.py", "--fast"], monkeypatch, capsys)
+    assert "sft has no record of 12 cells" in capsys.readouterr().out
 
 
 def test_quick_eval_needs_the_adapter_first(
@@ -881,6 +973,7 @@ def live_teacher() -> Iterator[int]:
     deadline = time.monotonic() + 10
     while not server.started and time.monotonic() < deadline:
         time.sleep(0.01)
+    assert server.started, "the teacher's engine did not start within 10 s"
     try:
         yield sock.getsockname()[1]
     finally:

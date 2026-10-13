@@ -316,6 +316,8 @@ def test_train_sft_learns_from_the_captured_rows_and_saves_the_adapter(
     adapter = folder / "adapter.safetensors"
     model = adapted(LFM_VOCAB)
     lora.check_adapter_file(model, adapter)  # the engine's shape exactly
+    note = json.loads((folder / "adapter.json").read_text())
+    assert note["which"] == "tiny" and note["rows"] == 2 and note["steps"] == 8
     assert (
         "main run (runs/main/sft/metrics.jsonl): 15 steps, loss/token 2.55 at "
         "step 1 -> 0.11 at step 15, peak 3.95 GB"
@@ -334,6 +336,29 @@ def test_train_sft_skips_a_row_over_the_cap_and_says_so(
     out = run_main(train_sft, argv, monkeypatch, capsys)
     assert "rows      1 kept · 1 over 800 tokens skipped" in out
     assert "[sft] step 1/1 · loss/token" in out and "147 tokens" in out
+
+
+def test_train_sft_refuses_held_out_rows_and_never_leaves_an_old_adapter(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any, tmp_path: Path, course_home: Path
+) -> None:
+    use_tiny_trainer(monkeypatch, tmp_path)
+    pi = tmp_path / "pi.jsonl"
+    records = [json.loads(line) for line in CAPTURED.read_text().splitlines()]
+    pi.write_text(json.dumps({**records[0], "harness": "pi"}) + "\n")
+    with pytest.raises(SystemExit, match="from pi, not a training harness"):
+        run_main(train_sft, ["train_sft.py", "--demos", str(pi)], monkeypatch, capsys)
+    folder = course_home / "25-sft-in-harnesses" / "sft"
+    folder.mkdir(parents=True)
+    (folder / "adapter.safetensors").write_bytes(b"an older run's")
+
+    def crash(*args: Any) -> None:
+        raise RuntimeError("stopped mid-run")
+
+    monkeypatch.setattr(train_sft, "train_sft", crash)
+    argv = ["train_sft.py", "--demos", str(CAPTURED)]
+    with pytest.raises(RuntimeError, match="stopped mid-run"):
+        run_main(train_sft, argv, monkeypatch, capsys)
+    assert not (folder / "adapter.safetensors").exists()
 
 
 def test_train_sft_names_the_command_that_builds_missing_demos(
@@ -385,6 +410,22 @@ def test_the_engine_model_switches_adapters_and_back_to_the_exact_base(
     assert not mx.allclose(model.model(tokens), base).item()
     assert model.set_adapter(None) == "base"
     assert mx.array_equal(model.model(tokens), base).item()  # B = 0 adds exactly 0
+
+
+def test_an_unreadable_or_retyped_adapter_file_is_refused(tmp_path: Path) -> None:
+    model = adapted()
+    junk = tmp_path / "junk.safetensors"
+    junk.write_bytes(b"not a safetensors file")
+    with pytest.raises(ValueError, match="cannot be read as an adapter"):
+        lora.check_adapter_file(model, junk)
+    retyped = {
+        name: value.astype(mx.float16)
+        for name, value in lora.adapter_weights(model).items()
+    }
+    other = tmp_path / "float16.safetensors"
+    mx.save_safetensors(str(other), retyped)
+    with pytest.raises(ValueError, match="float16"):
+        lora.check_adapter_file(model, other)
 
 
 def test_an_adapter_of_another_shape_is_refused_before_anything_loads(
@@ -475,6 +516,10 @@ def test_the_engine_is_found_by_its_pid_file_only(tmp_path: Path) -> None:
     record.parent.mkdir()
     record.write_text(str(os.getpid()))
     assert memory_probe.engine_running(tmp_path) == os.getpid()
+    command = record.with_suffix(".cmd")
+    command.write_text("uv run engine.py --port 8129\n")  # another program now
+    assert memory_probe.engine_running(tmp_path) is None
+    command.unlink()
     record.write_text("not a pid")
     assert memory_probe.engine_running(tmp_path) is None
 
@@ -506,6 +551,37 @@ def test_a_row_projected_over_budget_after_a_measured_pass_is_never_run(
     assert ran == [16, 32]
     assert [o.refused == "" for o in outcomes] == [True, True, False]
     assert "over the" in outcomes[2].refused and "refused ·" in lines[2]
+
+
+def test_a_pass_that_fails_is_recorded_and_no_longer_row_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = adapted()
+    baseline = float(mx.get_active_memory())
+
+    def failing(model: nn.Module, item: Any, setting: Any) -> tuple[float, float]:
+        if len(item.input_ids) > 16:
+            raise RuntimeError("[metal::malloc] Resource limit exceeded")
+        return baseline + 0.01 * GB, 0.1
+
+    monkeypatch.setattr(memory_probe, "one_pass", failing)
+    kept: list[memory_probe.Outcome] = []
+    lines: list[str] = []
+    outcomes = memory_probe.run_setting(
+        model,
+        memory_probe.BY_NAME["chunked"],
+        [16, 32, 64],
+        100 * GB,
+        baseline,
+        lines.append,
+        free=lambda: None,
+        on_outcome=kept.append,
+    )
+    assert kept == outcomes
+    assert outcomes[1].refused.startswith("failed: [metal::malloc]")
+    assert outcomes[2].refused == "not run: the 32-token pass failed"
+    assert [memory_probe.cell(o) for o in outcomes] == ["0.01 GB", "failed", "refused"]
+    assert "FAILED" in lines[1]
 
 
 def test_the_probe_measures_refuses_and_writes_its_results(
@@ -540,9 +616,13 @@ def test_the_probe_refuses_everything_over_a_tiny_budget_without_running(
 
     monkeypatch.setattr(memory_probe, "one_pass", never)
     argv = ["memory_probe.py", "--lengths", "24,48", "--budget-gb", "0.000001"]
-    out = run_main(memory_probe, argv, monkeypatch, capsys)
+    with pytest.raises(SystemExit) as stopped:
+        run_main(memory_probe, argv, monkeypatch, capsys)
+    assert stopped.value.code == 1
+    out = capsys.readouterr().out
     assert out.count("refused ·") == 6  # 3 settings x 2 lengths
     assert "over the 0.00 GB budget" in out
+    assert "nothing was measured: every row was refused or failed" in out
 
 
 def test_the_probe_will_not_start_beside_this_chapters_engine(

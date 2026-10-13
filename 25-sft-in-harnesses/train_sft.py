@@ -41,6 +41,7 @@ from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
+from collect import TRAIN_HARNESSES
 from lfm_files import GIGABYTE, chapter_home, pick_model, short_path
 from lora import LORA_LAYERS, LORA_RANK, LORA_SCALE, apply_lora, save_adapter
 from mlx_lm import load
@@ -65,6 +66,7 @@ from training import (
     Step,
     attention,
     demo_items,
+    item_from_sequence,
     layer_checkpointing,
     set_memory_limits,
     steps_per_epoch,
@@ -76,6 +78,8 @@ DEMOS_FILE = Path("demos") / "demos.jsonl"  # collect.py's file
 SFT_FOLDER = "sft"
 ADAPTER_FILE = "adapter.safetensors"
 METRICS_FILE = "metrics.jsonl"
+NOTE_FILE = "adapter.json"  # which build, rows and settings made the adapter
+DRY_STEPS_SHOWN = 4  # project_lines quotes the dry run's step 4
 GIB = 1024**3
 OVERFIT_LOSS = 0.10  # the project's comment: "loss 0.10 by step 4 of 6"
 HARNESS_COLUMN = 14
@@ -151,7 +155,9 @@ def rows_by_harness(records: list[dict[str, Any]], max_tokens: int) -> list[str]
         if not (record.get("correct") and record.get("trainable")):
             continue
         for row in record.get("sequences") or []:
-            if len(row["input_ids"]) > max_tokens:
+            # The rows demo_items keeps: none over the cap, none with nothing
+            # to train, so these counts add up to its "kept".
+            if len(row["input_ids"]) > max_tokens or not item_from_sequence(row):
                 continue
             harness = str(record.get("harness"))
             counts[harness] += 1
@@ -282,12 +288,20 @@ def main() -> None:
     """Read the demonstrations, train the adapter, save it, and show the project's runs.
 
     Raises:
-        SystemExit: If there are no demonstrations or no rows, or a bundled
+        SystemExit: If there are no demonstrations or no rows, a row comes
+            from a harness that is not a training harness, or a bundled
             project metrics file is missing or damaged.
     """
     args = parse_args()
     path = args.demos or demos_path()
     records = read_demos(path)
+    held_out = sorted({str(r.get("harness")) for r in records} - set(TRAIN_HARNESSES))
+    if held_out:  # a held-out harness's rows would make its evaluation unfair
+        raise SystemExit(
+            f"{SCRIPT}: {short_path(path)} holds demonstrations from "
+            f"{', '.join(held_out)}, not a training harness "
+            f"({', '.join(TRAIN_HARNESSES)})"
+        )
     rows = demo_items(records, args.max_tokens)
     if not rows.items:
         raise SystemExit(f"{SCRIPT}: no usable row in {short_path(path)}")
@@ -295,6 +309,10 @@ def main() -> None:
         project = read_run(MAIN_FILE), read_run(DRY_FILE)
     except ProjectRunError as error:
         raise SystemExit(f"{SCRIPT}: {error}") from error
+    if len(project[1]) < DRY_STEPS_SHOWN:
+        raise SystemExit(
+            f"{SCRIPT}: {DRY_FILE.name} has fewer than {DRY_STEPS_SHOWN} steps"
+        )
     folder, which = pick_model(args.fast)
     steps = print_setup(folder, which, path, rows, records, args)
     set_memory_limits()
@@ -302,6 +320,10 @@ def main() -> None:
     apply_lora(model, LORA_RANK, LORA_SCALE, LORA_LAYERS)
     out = sft_folder()
     out.mkdir(parents=True, exist_ok=True)
+    # An older adapter must never sit beside this run's metrics: if this run
+    # stops early, there is no adapter rather than the wrong one.
+    for old in (out / ADAPTER_FILE, out / NOTE_FILE):
+        old.unlink(missing_ok=True)
     metrics = out / METRICS_FILE
     metrics.write_text("")  # this run's steps only
     print(f"[sft] {len(rows.items)} training rows from {rows.demos} demos")
@@ -327,9 +349,20 @@ def main() -> None:
     with attention(chunked=True), layer_checkpointing(model, on=True):
         train_sft(model, rows.items, args.epochs, args.lr, args.batch, on_step)
     adapter = save_adapter(model, out / ADAPTER_FILE)
+    note = {
+        "model": short_path(folder),
+        "which": which,
+        "demos": short_path(path),
+        "rows": len(rows.items),
+        "steps": steps,
+        "lr": args.lr,
+        "epochs": args.epochs,
+        "batch": args.batch,
+    }
+    (out / NOTE_FILE).write_text(json.dumps(note, indent=2) + "\n", encoding="utf-8")
     print(
         f"saved     {short_path(adapter)} ({adapter.stat().st_size:,} bytes) · "
-        f"metrics {short_path(metrics)}"
+        f"metrics {short_path(metrics)} · note {NOTE_FILE}"
     )
     print("")
     for line in project_lines(*project):

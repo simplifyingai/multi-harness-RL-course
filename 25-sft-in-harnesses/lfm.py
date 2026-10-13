@@ -24,8 +24,9 @@ that samples (set at load, it would never reach the worker).
 Chapter 25 adds ``set_adapter``: the first adapter adds chapter 13's LoRA
 layers (the project's shape, from ``lora.py``), and every later switch loads
 another file into them, or zeroes their B matrices for the base model. The
-engine calls it on its worker thread, so the new arrays live where they are
-used.
+engine's ``/admin/adapter`` calls it on the worker thread; ``--adapter`` calls
+it at start-up on the main thread, before any request, where the weights are
+loaded too. Either way every new array is evaluated before it is used.
 """
 
 from __future__ import annotations
@@ -54,7 +55,9 @@ from mlx_lm.models.cache import make_prompt_cache
 from policy import FINISH_LENGTH, FINISH_STOP, GREEDY, Sampled, Sampling
 
 PREFILL_STEP = 1_024  # the project's Defaults.PREFILL_STEP (chapter 12)
-SERVES = "lfm2.5-2.6b 4-bit"  # what the engine's /health says it serves
+# What the engine's /health says it serves (quick_eval.py keeps the same
+# words: the scripts never import the engine, so keep the two in step).
+SERVES = "lfm2.5-2.6b 4-bit"
 BASE_ADAPTER = "base"
 UNTEMPERED = 1.0  # dividing the scores by 1 changes nothing
 STOP_WINDOW = 32  # the last tokens decoded to look for a stop text
@@ -165,6 +168,10 @@ class LfmModel(LfmText):
             return BASE_ADAPTER
         if not self.adapted:
             apply_lora(self.model, LORA_RANK, LORA_SCALE, LORA_LAYERS)
+            # apply_lora seeds MLX with LORA_SEED for its A matrices, on this
+            # thread: seed it again with --seed, so draws above temperature 0
+            # restart from the engine's own seed, as a fresh engine's would.
+            mx.random.seed(self.seed)
             self.adapted = True
         check_adapter_file(self.model, path)  # nothing changes if it is refused
         load_adapter(self.model, path)

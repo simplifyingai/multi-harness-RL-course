@@ -136,10 +136,14 @@ TIMING_DIGITS = 3  # timings are reported to the millisecond
 ID_KEY = "id:"  # a remembered reply, looked up by one of its tool calls' ids
 TEXT_KEY = "text:"  # ... or by its visible text
 GIGABYTE = 1_000_000_000
-SERVES_TEACHER = "answer-key teacher"  # /health's "serves" with --oracle
+# /health's "serves" with --oracle (collect.py keeps the same words: the
+# scripts never import the engine, so keep the two in step).
+SERVES_TEACHER = "answer-key teacher"
 BASE_ADAPTER = "base"  # no adapter: the model as downloaded
 CERTAIN = 0.0  # log(1): every token of a demonstration is certain
-ORACLE_ONLY_FLAGS = ("adapter", "fast", "no_token_fields", "raw_logprobs")
+ADAPTER_SHAPE = 'expected {"path": "<adapter file>"} or {"path": null}'
+# Flags that clash with --oracle: each one needs the model's weights.
+FLAGS_NEEDING_WEIGHTS = ("adapter", "fast", "no_token_fields", "raw_logprobs")
 PORT_BUSY = (
     "{host}:{port} is in use: another program listens there (or an engine that "
     "just stopped has not let go of it yet). Start the engine on a free port "
@@ -234,6 +238,8 @@ class Stats:
             harness's copy: those calls do not continue the earlier ones.
         recut: Replies whose own text cuts into other tokens.
         adapter: The LoRA adapter replies are sampled with (``base``: none).
+        adapter_path: Its file, or None for the base model (``/health``
+            gives it, so a caller can put back what it found).
     """
 
     requests: int = 0
@@ -245,6 +251,7 @@ class Stats:
     not_restored: int = 0
     recut: int = 0
     adapter: str = BASE_ADAPTER
+    adapter_path: str | None = None
 
 
 def as_int(body: dict[str, Any], name: str, default: int) -> int:
@@ -630,6 +637,7 @@ class Engine:
             self.stats.adapter = switch(path)
         except (FileNotFoundError, ValueError) as error:
             raise BadRequest(f"no adapter loaded: {error}") from error
+        self.stats.adapter_path = str(path) if path else None
         # A cache holds the work of the old weights: none of it is valid now.
         self.caches.clear()
         return self.stats.adapter
@@ -653,7 +661,9 @@ class OracleModel:
     other on its one worker thread, so ``render`` hands the conversation to
     ``sample`` (as chapter 23's scripted model does). The conversation the
     teacher reads is the engine's: earlier replies already put back as the
-    teacher wrote them.
+    teacher wrote them. A demonstration is never drawn, so the request's
+    temperature, alternatives and stop texts do not apply: the reply is the
+    teacher's whole text, cut only by ``max_tokens``.
 
     Attributes:
         text: LFM2.5's tokenizer and chat template (``lfm_text.py``).
@@ -925,6 +935,7 @@ def create_app(engine: Engine) -> FastAPI:
         if serves:  # the model or the teacher (a scripted model says nothing)
             answer["serves"] = serves
             answer["adapter"] = engine.stats.adapter
+            answer["adapter_path"] = engine.stats.adapter_path
         return answer
 
     @app.get("/v1/models")
@@ -971,11 +982,13 @@ def create_app(engine: Engine) -> FastAPI:
                 body = await http.json()
             except ValueError as error:
                 raise BadRequest(f"the request body is not JSON: {error}") from error
-            path = body.get("path") if isinstance(body, dict) else ""
+            # "path" must be there: a missing or misspelt key must never
+            # quietly mean "the base model".
+            if not isinstance(body, dict) or "path" not in body:
+                raise BadRequest(ADAPTER_SHAPE)
+            path = body["path"]
             if path is not None and not (isinstance(path, str) and path):
-                raise BadRequest(
-                    'expected {"path": "<adapter file>"} or {"path": null}'
-                )
+                raise BadRequest(ADAPTER_SHAPE)
             wanted = Path(path).expanduser() if path else None
             loop = asyncio.get_running_loop()
             # On the worker thread, after every request already waiting for it.
@@ -1076,7 +1089,7 @@ def parse_args() -> argparse.Namespace:
     )
     args = parser.parse_args()
     if args.oracle:
-        clashing = [name for name in ORACLE_ONLY_FLAGS if getattr(args, name)]
+        clashing = [name for name in FLAGS_NEEDING_WEIGHTS if getattr(args, name)]
         if clashing:
             flags = ", ".join("--" + name.replace("_", "-") for name in clashing)
             parser.error(f"--oracle reads no weights, so it takes no {flags}")
