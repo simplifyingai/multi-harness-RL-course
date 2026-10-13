@@ -23,6 +23,7 @@ import read_results  # noqa: E402
 from read_results import (  # noqa: E402
     Cell,
     Checkpoint,
+    Run,
     pair_results,
     read_run,
     read_stages,
@@ -290,21 +291,151 @@ def test_other_harnesses_held_out_follow_the_flag(tmp_path: Path) -> None:
     assert "claude-code, never trained in: 1 -> 1 solved" in text
 
 
-def test_against_compares_two_runs_cell_by_cell(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+def test_against_the_recorded_run_against_itself_is_all_same(
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert read_results.main(["--against"]) == 0  # the recorded run against itself
+    assert read_results.main(["--against"]) == 0
     text = capsys.readouterr().out
     section = text[text.index("━━ recorded against recorded") :]
     rows = [line for line in section.splitlines() if line.startswith("  base ")]
-    assert len(rows) == 3 and all(" same " in row for row in rows)
-    write_records(tmp_path, "base", {"airline-easy-001": False})
-    other = read_run(tmp_path)
-    mine = read_run(read_results.PROJECT_RUN)
-    lines = read_results.against_section(other, mine, ["claude-code"])
+    assert section.startswith("━━ recorded against recorded (this run):")
+    assert len(rows) == 3
+    for row in rows:
+        assert " same " in row
+        assert row.endswith("(+0 only in recorded, +0 only in recorded (this run))")
+    # what reading the recorded run substituted is printed, never hidden
     assert (
-        lines[1]
-        == f"━━ recorded against {tmp_path.name}: the same checkpoint, the same cells"
+        "  recorded: pi for base, sft, rl from eval_<label>-pi-fixed.jsonl" in section
     )
-    assert re.search(r"base +claude-code +1 +1 +0 +0 +1 +1\.000  within", lines[3])
-    assert "not in recorded" not in "\n".join(lines)
+    assert "recorded: also holds rl_attempt1, not compared" in section
+
+
+def runs_in(tmp_path: Path, mine: dict, theirs: dict) -> tuple[Run, Run]:
+    """Two tiny runs, each in its own folder (``mine/run``, ``theirs/run``).
+
+    Args:
+        tmp_path: The test's folder.
+        mine: ``{label: {task_id: correct}}`` for this run.
+        theirs: The same for the run it is compared with.
+
+    Returns:
+        This run and the other.
+    """
+    folders = []
+    for name, labels in (("mine", mine), ("theirs", theirs)):
+        folder = tmp_path / name / "run"
+        folder.mkdir(parents=True)
+        for label, verdicts in labels.items():
+            write_records(folder, label, verdicts)
+        folders.append(read_run(folder))
+    return folders[0], folders[1]
+
+
+def test_against_counts_cells_found_in_one_run_only(tmp_path: Path) -> None:
+    mine, theirs = runs_in(
+        tmp_path,
+        {"base": {"t1": True, "t2": True, "t3": False}},
+        {"base": {"t1": False, "t4": True}},
+    )
+    lines = read_results.against_section(mine, theirs)
+    [row] = [line for line in lines if line.startswith("  base ")]
+    assert re.search(r"base +claude-code +1 +0 +1 +1 +0 +1\.000  within", row)
+    assert row.endswith("(+1 only in theirs/run, +2 only in mine/run)")
+
+
+def test_against_prints_gained_and_lost_with_their_p(tmp_path: Path) -> None:
+    six = {f"t{i}": True for i in range(6)}
+    mine, theirs = runs_in(tmp_path, {"base": six}, {"base": {t: False for t in six}})
+    [row] = [
+        line for line in read_results.against_section(mine, theirs) if "  base " in line
+    ]
+    assert re.search(r"base +claude-code +6 +0 +6 +6 +0 +0\.031  beyond", row)
+    assert "none solved by both, 6 solved in one run only" in row
+
+
+def test_against_names_a_checkpoint_missing_on_either_side(tmp_path: Path) -> None:
+    mine, theirs = runs_in(
+        tmp_path,
+        {"base": {"t1": True}, "sft": {"t1": True}},
+        {"base": {"t1": True}, "rl": {"t1": False}},
+    )
+    text = "\n".join(read_results.against_section(mine, theirs))
+    assert re.search(r"  sft +not in theirs/run", text)
+    assert re.search(r"  rl +not in mine/run", text)
+
+
+def test_against_with_no_cell_in_both_says_so(tmp_path: Path) -> None:
+    mine, theirs = runs_in(tmp_path, {"base": {"t1": True}}, {"base": {"t2": True}})
+    [row] = [
+        line for line in read_results.against_section(mine, theirs) if "  base " in line
+    ]
+    assert row.endswith(
+        "0  no cell in both runs (+1 only in theirs/run, +1 only in mine/run)"
+    )
+
+
+def test_against_a_missing_folder_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    missing = tmp_path / "nowhere"
+    assert read_results.main(["--against", str(missing)]) == 1
+    assert f"no run folder at {missing}" in capsys.readouterr().err
+
+
+def test_against_a_broken_folder_is_named(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_records(tmp_path, "base", {"t1": True})
+    with (tmp_path / "eval_base.jsonl").open("a", encoding="utf-8") as records:
+        records.write("{")
+    assert read_results.main(["--against", str(tmp_path)]) == 1
+    assert f"cannot read {tmp_path}:" in capsys.readouterr().err
+
+
+def write_harness(folder: Path, label: str, harness: str, task: str) -> None:
+    """Add one solved cell of another harness to a run's eval file.
+
+    Args:
+        folder: The run folder.
+        label: The checkpoint.
+        harness: The harness.
+        task: The task id.
+    """
+    row = {"task_id": task, "harness": harness, "correct": True, "n_calls": 3}
+    with (folder / f"eval_{label}.jsonl").open("a", encoding="utf-8") as records:
+        records.write(json.dumps(row) + "\n")
+
+
+def test_against_a_harness_in_one_run_only_gets_its_row(tmp_path: Path) -> None:
+    mine, theirs = runs_in(tmp_path, {"base": {"t1": True}}, {"base": {"t1": True}})
+    write_harness(theirs.folder, "base", "pi", "t1")
+    theirs = read_run(theirs.folder)
+    lines = read_results.against_section(mine, theirs)
+    [row] = [line for line in lines if line.startswith("  base        pi ")]
+    assert row.endswith(
+        "0  no cell in both runs (+1 only in theirs/run, +0 only in mine/run)"
+    )
+
+
+def test_against_a_checkpoint_in_neither_run_is_named(tmp_path: Path) -> None:
+    mine, theirs = runs_in(tmp_path, {"base": {"t1": True}}, {"rl": {"t1": True}})
+    text = "\n".join(read_results.against_section(mine, theirs))
+    assert re.search(r"  base +not in theirs/run", text)
+    assert re.search(r"  sft +in neither run", text)
+    assert re.search(r"  rl +not in mine/run", text)
+
+
+def test_run_names_never_repeat(tmp_path: Path) -> None:
+    def run_at(*parts: str) -> Run:
+        """An empty run in the folder those parts name."""
+        folder = tmp_path.joinpath(*parts)
+        folder.mkdir(parents=True)
+        return read_run(folder)
+
+    same_parent = run_at("a", "x", "run"), run_at("b", "x", "run")
+    assert read_results.run_names(*same_parent) == ("a/x/run", "b/x/run")
+    literal = run_at("recorded")
+    bundled = read_run(read_results.PROJECT_RUN)
+    names = read_results.run_names(literal, bundled)
+    assert names[1] == "recorded" and names[0] != "recorded"
+    assert names[0].endswith("/recorded")

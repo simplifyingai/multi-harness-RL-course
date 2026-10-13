@@ -82,6 +82,17 @@ GRPO_METRICS = Path("grpo") / "metrics.jsonl"
 BANNER = "==="
 CLOCK_FORMATS = ("%Y-%m-%d %H:%M:%S", "%H:%M:%S")
 SIGNIFICANT = 0.05
+SAME, BEYOND, WITHIN = "same", "beyond", "within"  # a split's reading, one word
+NOISE = "noise"  # "beyond noise", "within noise"
+P_FORMAT = ".3f"  # every p-value is printed this way
+CELLS_WIDTH = 5  # a count of cells, right-aligned
+GAINED, LOST, READING = 6, 4, 7  # the comparison table's columns
+P_WIDTH = 5  # "0.031"
+RECORDED_NAME = "recorded"  # the project's bundled run, in a comparison
+THIS_RUN = " (this run)"  # added when a run is compared with itself
+NOT_IN = "not in"  # a checkpoint found in one run only
+IN_NEITHER = "in neither run"  # a checkpoint found in no run
+NONE_SOLVED = "none solved by both"
 CHURN_SHARE = 3  # churn: flips that cancel out are at least 1/3 of the cells
 SECONDS_PER_MINUTE = 60
 SECONDS_PER_DAY = 24 * 60 * 60
@@ -604,7 +615,8 @@ def paired_calls_line(first: Checkpoint, second: Checkpoint, harness: str) -> st
     medians = f"{statistics.median(before):g}->{statistics.median(after):g}"
     return (
         f"  {pair:<{PAIR}} {harness:<{NAME}}{len(shared):4d}  {means:<20} "
-        f"{medians:<7} {fewer:5d} {more:5d} {same:5d}  {exact_p(fewer, more):.3f}"
+        f"{medians:<7} {fewer:5d} {more:5d} {same:5d}  "
+        f"{exact_p(fewer, more):{P_FORMAT}}"
     )
 
 
@@ -652,8 +664,8 @@ def pair_reading(comparison: Comparison) -> str:
         return "nothing changed"
     if comparison.p_value < SIGNIFICANT:
         side = "gained" if len(comparison.gained) > len(comparison.lost) else "lost"
-        return f"{side}: beyond noise"
-    return "within noise"
+        return f"{side}: {BEYOND} {NOISE}"
+    return f"{WITHIN} {NOISE}"
 
 
 @dataclass(frozen=True)
@@ -727,7 +739,7 @@ def pairs_section(results: list[PairResult]) -> list[str]:
         lines.append(
             f"  {r.pair:<{PAIR}} {r.harness:<{NAME}}{cells:5d}  {r.before:6d}  "
             f"{r.after:5d}  {len(c.gained):6d}  {len(c.lost):4d}  {c.flipped:7d}  "
-            f"{c.p_value:.3f}  {pair_reading(c)}"
+            f"{c.p_value:{P_FORMAT}}  {pair_reading(c)}"
         )
     lines.append(
         f"  p < {SIGNIFICANT:g} reads as beyond noise; anything else, within it"
@@ -820,10 +832,11 @@ def gap_section(results: list[GapResult]) -> list[str]:
         "only first  only second  p      reading",
     ]
     for r in results:
-        reading = "beyond noise" if r.p_value < SIGNIFICANT else "within noise"
+        reading = f"{noise_word(r.p_value)} {NOISE}"
         lines.append(
             f"  {r.label:<{LABEL}}{r.first:<{NAME}}{r.second:<{NAME}}{r.tasks:5d}  "
-            f"{r.only_first:10d}  {r.only_second:11d}  {r.p_value:.3f}  {reading}"
+            f"{r.only_first:10d}  {r.only_second:11d}  "
+            f"{r.p_value:{P_FORMAT}}  {reading}"
         )
     return lines
 
@@ -1183,7 +1196,7 @@ def gap_reading(gaps: list[GapResult]) -> list[str]:
         most, least = sorted((g.only_first, g.only_second), reverse=True)
         lines.append(
             f"    {g.label}: {ahead} ahead of {behind}, {most} tasks to "
-            f"{least} (p {g.p_value:.3f})"
+            f"{least} (p {g.p_value:{P_FORMAT}})"
         )
     return lines
 
@@ -1205,7 +1218,7 @@ def checkpoint_reading(pairs: list[PairResult]) -> list[str]:
         c = p.comparison
         lines.append(
             f"    {p.pair}, {p.harness}: {p.before} -> {p.after} solved, "
-            f"{len(c.gained)} gained, {len(c.lost)} lost (p {c.p_value:.3f})"
+            f"{len(c.gained)} gained, {len(c.lost)} lost (p {c.p_value:{P_FORMAT}})"
         )
     lines.append("  checkpoints, within noise:")
     lines += [] if noise else ["    none"]
@@ -1213,7 +1226,7 @@ def checkpoint_reading(pairs: list[PairResult]) -> list[str]:
         c = p.comparison
         lines.append(
             f"    {p.pair}, {p.harness}: {p.after - p.before:+d} "
-            f"({len(c.gained)} gained, {len(c.lost)} lost, p {c.p_value:.3f})"
+            f"({len(c.gained)} gained, {len(c.lost)} lost, p {c.p_value:{P_FORMAT}})"
         )
     return lines
 
@@ -1266,11 +1279,11 @@ def calls_reading(run: Run, harnesses: list[str]) -> list[str]:
         fewer = sum(a < b for b, a in shared)
         more = sum(a > b for b, a in shared)
         p = exact_p(fewer, more)
-        reading = "beyond noise" if p < SIGNIFICANT else "within noise"
+        reading = f"{noise_word(p)} {NOISE}"
         lines.append(
             f"  calls, {first.label} -> {second.label}, every harness pooled: "
             f"fewer on {fewer} of {len(shared)} shared solves, more on {more} "
-            f"(p {p:.3f}): {reading}"
+            f"(p {p:{P_FORMAT}}): {reading}"
         )
     return lines
 
@@ -1299,7 +1312,7 @@ def held_out_lines(run: Run, harness: str, pairs: list[PairResult]) -> list[str]
     return [
         f"  {harness}, never trained in: {p.before} -> {p.after} solved, "
         f"{first} -> {last} ({len(c.gained)} gained, {len(c.lost)} lost, "
-        f"p {c.p_value:.3f}): {reading}"
+        f"p {c.p_value:{P_FORMAT}}): {reading}"
     ]
 
 
@@ -1329,79 +1342,161 @@ def article_box(run: Run, harnesses: list[str]) -> list[str]:
     return lines
 
 
-def run_name(run: Run) -> str:
-    """How a run is named in the comparison with another.
+def noise_word(p_value: float) -> str:
+    """Read a p-value as one word.
+
+    Args:
+        p_value: An exact p-value.
+
+    Returns:
+        ``beyond`` below the significance level, else ``within``.
+    """
+    return BEYOND if p_value < SIGNIFICANT else WITHIN
+
+
+def run_name(run: Run, parents: int) -> str:
+    """One run's name in a comparison.
 
     Args:
         run: The run.
+        parents: How many parent folders to write before its folder's name.
 
     Returns:
-        ``recorded`` for the project's bundled run, else its folder's name.
+        ``recorded`` for the project's bundled run, else such as
+        ``capstone`` or, with one parent, ``runs/capstone``.
     """
-    bundled = run.folder.resolve() == PROJECT_RUN.resolve()
-    return "recorded" if bundled else run.folder.resolve().name
+    if run.folder.resolve() == PROJECT_RUN.resolve():
+        return RECORDED_NAME
+    parts = run.folder.resolve().parts[1:]  # the root "/" is not a folder name
+    return "/".join(parts[max(0, len(parts) - 1 - parents) :])
 
 
-def against_section(run: Run, other: Run, harnesses: list[str]) -> list[str]:
-    """This run beside another, checkpoint by checkpoint, on the cells both ran.
+def run_names(run: Run, other: Run) -> tuple[str, str]:
+    """How the two runs are named in the comparison, never the same name.
+
+    Two folders of the same name are told apart by their parent folders. A
+    run compared with itself is named twice, the second time "(this run)".
+
+    Args:
+        run: This run.
+        other: The run it is compared with.
+
+    Returns:
+        This run's name and the other's.
+    """
+    if run.folder.resolve() == other.folder.resolve():
+        name = run_name(run, 0)
+        return name + THIS_RUN, name
+    depth = max(len(run.folder.resolve().parts), len(other.folder.resolve().parts))
+    for parents in range(depth):
+        mine, theirs = run_name(run, parents), run_name(other, parents)
+        if mine != theirs:
+            return mine, theirs
+    return run_name(run, depth) + THIS_RUN, run_name(other, depth)
+
+
+def union_harnesses(run: Run, other: Run) -> list[str]:
+    """Every harness either run evaluated, in the project's order.
+
+    Args:
+        run: This run.
+        other: The run it is compared with.
+
+    Returns:
+        Harness names.
+    """
+    seen = set(harnesses_of(run)) | set(harnesses_of(other))
+    known = [h for h in HARNESS_ORDER if h in seen]
+    return known + sorted(seen - set(known))
+
+
+def against_section(run: Run, other: Run) -> list[str]:
+    """This run beside another, checkpoint by checkpoint, cell by cell.
 
     Two runs of the same code are two draws: the pairs say which differences
-    are beyond noise. Calls per solve is counted on the cells both solved.
+    are beyond noise. Every checkpoint of either run, and every harness of
+    either, gets a row; every row counts the cells found in one run only;
+    and what reading each run substituted or left out is printed below, so
+    a comparison on part of the cells never reads as one on all of them.
 
     Args:
         run: This run.
         other: The run to compare with (the recorded one by default).
-        harnesses: This run's harnesses.
 
     Returns:
         Lines.
     """
-    mine, theirs = run_name(run), run_name(other)
+    mine, theirs = run_names(run, other)
     width = max(len(mine), len(theirs))
     lines = [
         "",
         f"{RULE} {theirs} against {mine}: the same checkpoint, the same cells",
-        f"  {'checkpoint':<{LABEL}}{'harness':<{NAME}}cells  {theirs:>{width}}  "
-        f"{mine:>{width}}  gained  lost  p      reading  calls on cells both solved",
+        f"  {'checkpoint':<{LABEL}}{'harness':<{NAME}}{'cells':>{CELLS_WIDTH}}  "
+        f"{theirs:>{width}}  {mine:>{width}}  {'gained':>{GAINED}}  "
+        f"{'lost':>{LOST}}  {'p':<{P_WIDTH}}  {'reading':<{READING}}  "
+        "calls on cells both solved",
     ]
-    for checkpoint in run.checkpoints:
-        match = [c for c in other.checkpoints if c.label == checkpoint.label]
-        if not match:
-            lines.append(f"  {checkpoint.label:<{LABEL}}not in {theirs}")
-            continue
-        for harness in harnesses:
-            lines.append(against_line(match[0], checkpoint, harness, width))
+    for label in CHECKPOINTS:
+        ours = next((c for c in run.checkpoints if c.label == label), None)
+        their = next((c for c in other.checkpoints if c.label == label), None)
+        if ours is None and their is None:
+            lines.append(f"  {label:<{LABEL}}{IN_NEITHER}")
+        elif ours is None or their is None:
+            absent = mine if ours is None else theirs
+            lines.append(f"  {label:<{LABEL}}{NOT_IN} {absent}")
+        else:
+            for harness in union_harnesses(run, other):
+                lines.append(against_line(their, ours, harness, width, (theirs, mine)))
     lines.append(
         f"  gained / lost: cells right in {mine} and wrong in {theirs}, and the "
         "reverse;"
     )
     lines.append(
-        f"  p < {SIGNIFICANT:g} reads as beyond noise; calls: mean before -> after "
-        "(cells), and the"
+        f"  p < {SIGNIFICANT:g} reads as {BEYOND} {NOISE}; calls: mean before -> "
+        "after (cells), the sign"
     )
-    lines.append("  sign test's p on fewer against more")
+    lines.append(
+        "  test's p on fewer against more, and how many cells only one run solved"
+    )
+    for name, item in ((theirs, other), (mine, run)):
+        for note in item.notes:
+            lines += wrap(f"{name}: {note}", "  ")
+        if item.others:
+            lines += wrap(
+                f"{name}: also holds {', '.join(item.others)}, not compared", "  "
+            )
     return lines
 
 
-def calls_compared(solved: list[tuple[int, int]]) -> str:
+def calls_compared(solved: list[tuple[int, int]], one_sided: int) -> str:
     """Calls before and after on shared solves, with the sign test's p.
 
     Args:
-        solved: (calls before, calls after) per cell both solved.
+        solved: (calls before, calls after) per cell both runs solved.
+        one_sided: Cells in both runs that only one of them solved, which
+            the calls leave out.
 
     Returns:
-        Such as ``5.0 -> 7.5 (6), p 0.031``.
+        Such as ``5.0 -> 7.5 (6), p 0.031, 2 solved in one run only``.
     """
+    left_out = f"{one_sided} solved in one run only"
     if not solved:
-        return "none solved by both"
+        return f"{NONE_SOLVED}, {left_out}"
     fewer = sum(a < b for b, a in solved)
     more = sum(a > b for b, a in solved)
     before = statistics.fmean(b for b, _ in solved)
     after = statistics.fmean(a for _, a in solved)
-    return f"{before:.1f} -> {after:.1f} ({len(solved)}), p {exact_p(fewer, more):.3f}"
+    p = exact_p(fewer, more)
+    return f"{before:.1f} -> {after:.1f} ({len(solved)}), p {p:{P_FORMAT}}, {left_out}"
 
 
-def against_line(theirs: Checkpoint, mine: Checkpoint, harness: str, width: int) -> str:
+def against_line(
+    theirs: Checkpoint,
+    mine: Checkpoint,
+    harness: str,
+    width: int,
+    names: tuple[str, str],
+) -> str:
     """One harness at one checkpoint, two runs compared cell by cell.
 
     Args:
@@ -1409,25 +1504,29 @@ def against_line(theirs: Checkpoint, mine: Checkpoint, harness: str, width: int)
         mine: This run's checkpoint.
         harness: The harness.
         width: The two runs' columns.
+        names: The other run's name and this run's.
 
     Returns:
-        The line.
+        The line, ending with the cells found in one run only.
     """
     before, after = theirs.verdicts(harness), mine.verdicts(harness)
     shared = sorted(set(before) & set(after))
+    only = (
+        f"(+{len(set(before) - set(after))} only in {names[0]}, "
+        f"+{len(set(after) - set(before))} only in {names[1]})"
+    )
     label = f"  {mine.label:<{LABEL}}{harness:<{NAME}}"
     if not shared:
-        return label + "    0  no cell in both runs"
+        return label + f"{0:{CELLS_WIDTH}d}  no cell in both runs {only}"
     c = compare({t: before[t] for t in shared}, {t: after[t] for t in shared})
-    if not c.flipped:
-        reading = "same"
-    else:
-        reading = "beyond" if c.p_value < SIGNIFICANT else "within"
-    calls = calls_compared(shared_solves(theirs, mine, [harness]))
+    reading = noise_word(c.p_value) if c.flipped else SAME
+    calls = calls_compared(shared_solves(theirs, mine, [harness]), c.flipped)
     return (
-        label + f"{len(shared):5d}  {sum(before[t] for t in shared):{width}d}  "
-        f"{sum(after[t] for t in shared):{width}d}  {len(c.gained):6d}  "
-        f"{len(c.lost):4d}  {c.p_value:.3f}  {reading:<7}  {calls}"
+        label
+        + f"{len(shared):{CELLS_WIDTH}d}  {sum(before[t] for t in shared):{width}d}  "
+        f"{sum(after[t] for t in shared):{width}d}  {len(c.gained):{GAINED}d}  "
+        f"{len(c.lost):{LOST}d}  {c.p_value:{P_FORMAT}}  {reading:<{READING}}  "
+        f"{calls} {only}"
     )
 
 
@@ -1461,7 +1560,7 @@ def report(
     lines += network_section(run.folder)
     lines += reading_section(run, harnesses, train, pairs, gaps)
     if other is not None:
-        lines += against_section(run, other, harnesses)
+        lines += against_section(run, other)
     lines += article_box(run, harnesses)
     return "\n".join(lines)
 
@@ -1511,20 +1610,26 @@ def main(argv: list[str] | None = None) -> int:
         argv: The arguments (None reads ``sys.argv``).
 
     Returns:
-        0, or 1 when the folder does not exist or holds a broken record.
+        0, or 1 when a folder does not exist or holds a broken record.
     """
     args = parse_args(argv)
     folder = args.run_dir.expanduser()
-    if not folder.is_dir():
-        print(f"no run folder at {short_path(folder)}", file=sys.stderr)
-        return 1
+    against = args.against.expanduser() if args.against else None
+    for named in (folder, against):
+        if named is not None and not named.is_dir():
+            print(f"no run folder at {short_path(named)}", file=sys.stderr)
+            return 1
     stages = (args.stages or folder / STAGES_FILE).expanduser()
     train = [name.strip() for name in args.train_harnesses.split(",") if name.strip()]
-    try:
-        run = read_run(folder)
-        other = read_run(args.against.expanduser()) if args.against else None
-    except ValueError as error:  # a broken row: say where, never half a table
-        print(f"cannot read a run: {error}", file=sys.stderr)
+    runs: list[Run | None] = []
+    for named in (folder, against):
+        try:
+            runs.append(read_run(named) if named is not None else None)
+        except ValueError as error:  # a broken row: say where, never half a table
+            print(f"cannot read {short_path(named)}: {error}", file=sys.stderr)
+            return 1
+    run, other = runs
+    if run is None:  # the first folder is always read; this keeps types exact
         return 1
     print(report(run, stages, train, other))
     return 0
