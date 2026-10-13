@@ -1,0 +1,52 @@
+power.py · how many paired tasks before a gain can be told from noise
+  test      exact McNemar, two-sided: a change counts when p < 0.05 (chapter 24's exact_p)
+  power     80.0%: the chance a real gain of that size shows up as p < 0.05
+
+━━ reading one paired comparison (chapter 24: claude-code, base -> sft)
+  24 tasks: 15 solved before, 17 after; 7 gained, 5 lost, 12 flipped, 12 unchanged
+  only the 12 flipped tasks say which checkpoint is better; if the two are equally good,
+  each of them is a coin flip between gained and lost
+  exact p = 0.774: a split at least as uneven as 7 to 5 comes up 77% of the time by luck alone
+
+━━ how often two checkpoints disagree: chapter 24's 9 pairs
+  pair         harness         cells  gained  lost  flipped  p
+  base -> sft  mini-swe-agent     24       0     6        6  0.031
+  base -> sft  claude-code        24       7     5       12  0.774
+  base -> sft  pi                 24       7     2        9  0.180
+  base -> rl   mini-swe-agent     24       0     4        4  0.125
+  base -> rl   claude-code        24       7     4       11  0.549
+  base -> rl   pi                 24       8     3       11  0.227
+  sft -> rl    mini-swe-agent     24       2     0        2  0.500
+  sft -> rl    claude-code        24       2     1        3  1.000
+  sft -> rl    pi                 24       5     5       10  1.000
+  pooled: 68 of 216 cells flipped = 31.5% of tasks
+
+━━ +10 points from 60.0% (to 70.0%), p < 0.05, power 80.0%
+  assumption                      flipped  gained   lost  tasks needed                  normal approx.
+  only gains                        10.0%   10.0%   0.0%  78 (exact, power 80.4%)       77
+  chapter 24's churn                31.5%   20.7%  10.7%  261 (exact, power 80.0%)      245
+  independent attempts              46.0%   28.0%  18.0%  377 (exact, power 80.1%)      359
+
+━━ check: 10,000 simulated comparisons at each answer (seed 0)
+  assumption              tasks  p < 0.05    exact
+  only gains                 78     80.4%    80.4%
+  chapter 24's churn        261     80.3%    80.0%
+  independent attempts      377     80.1%    80.1%
+
+━━ +10 points from other baselines, tasks needed (power 80.0%)
+  baseline  only gains  chapter 24's churn  independent attempts
+     20.0%          78                 261                   313
+     40.0%          78                 261                   408
+     60.0%          78                 261                   377
+     80.0%          78         cannot hold                   215
+  only independent attempts depend on the baseline; 'cannot hold': that much flipping
+  would need more gains than there are unsolved tasks
+
+━━ what 24 tasks per harness can see (chapters 24 to 28)
+  a real +10 points shows up as p < 0.05 in: 2.8% (only gains); 6.5% (chapter 24's churn); 6.1% (independent attempts)
+  chapter 24's changes beyond noise: 1 of 9 pairs
+    mini-swe-agent base -> sft: 0 gained, 6 lost (p = 0.031), -25 points
+
+━━ the plan said '+10 points at p < 0.05 needs about 150 paired tasks'
+  measured, with chapter 24's churn: 261 (exact, power 80.0%); 150 tasks give power 54.4%
+  150 tasks reach power 80.0% only while at most 17.5% of tasks flip
