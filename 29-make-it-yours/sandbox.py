@@ -16,15 +16,21 @@ Claude Code runs the model's shell commands on your laptop with
 applied, this module raises instead of falling back, and nothing runs.
 
 ``uv run sandbox.py`` prints the ``sandbox-exec`` command a run would use,
-with every parameter the profile reads.
+with every parameter the profile reads. ``uv run sandbox.py --workdir
+<task folder> -- <command>`` runs one command in the box a rollout in that
+folder would get, and prints its exit status and output: the way to check
+what the box lets a rollout see.
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import pwd
 import shlex
+import subprocess
 import sys
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -59,6 +65,7 @@ SYSTEM_TMP_PARAM = "SYSTEM_TMP"
 SYSTEM_TMP_ON = "1"
 EXAMPLE_RUN = "example"
 EXAMPLE_FOLDERS = ("task", "state")  # where an example run would write
+TRY_TIMEOUT_S = 30
 
 # Secret-file patterns, appended to the escaped home folder:
 # .env, .envrc, name.env, each with optional suffixes (.env.local); not .venv.
@@ -340,8 +347,55 @@ def sandbox_command(
     return [str(SANDBOX_EXEC), "-f", str(profile), *defines, *command]
 
 
+def try_in_box(workdir: Path, command: list[str], proxy_port: int) -> int:
+    """Run one command in the box a rollout in ``workdir`` would get.
+
+    Args:
+        workdir: An existing task folder.
+        command: The command and its arguments.
+        proxy_port: The loopback port the box leaves open.
+
+    Returns:
+        The command's exit status.
+
+    Raises:
+        SandboxError: If the box cannot be applied.
+    """
+    home = str(Path.home())
+    with tempfile.TemporaryDirectory(prefix="mhrl-box-check-") as state:
+        params = sandbox_params(
+            workdir=workdir, state_dir=Path(state), proxy_port=proxy_port
+        )
+        argv = sandbox_command(command, params=params)
+        done = subprocess.run(
+            argv,
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=TRY_TIMEOUT_S,
+            check=False,
+        )
+    print(f"$ {shlex.join(command)}".replace(home, "~"))
+    print(f"  (in the box of {short_path(workdir.resolve())})")
+    for line in (done.stdout + done.stderr).splitlines():
+        print("  " + line.replace(home, "~"))
+    print(f"  exit {done.returncode}")
+    return done.returncode
+
+
 def main() -> None:
-    """Print the command a run would use, one parameter per line."""
+    """Print the command a run would use, or run one command in a rollout's box."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--workdir", type=Path, help="a task folder to try a box in")
+    parser.add_argument("--proxy-port", type=int, default=DEFAULT_PROXY_PORT)
+    parser.add_argument("command", nargs=argparse.REMAINDER, help="-- then a command")
+    args = parser.parse_args()
+    command = args.command[1:] if args.command[:1] == ["--"] else args.command
+    if args.workdir is not None:
+        if not command:
+            parser.error("--workdir needs a command after --")
+        try_in_box(args.workdir, command, args.proxy_port)
+        return
     example = chapter_home() / EXAMPLE_RUN
     workdir, state = (example / name for name in EXAMPLE_FOLDERS)
     workdir.mkdir(parents=True, exist_ok=True)

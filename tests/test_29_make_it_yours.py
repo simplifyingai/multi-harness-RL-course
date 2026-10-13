@@ -602,6 +602,22 @@ def test_another_cells_folder_and_the_records_are_unreadable(
 
 
 @pytest.mark.skipif(not sandbox.SANDBOX_EXEC.exists(), reason="needs sandbox-exec")
+def test_a_command_can_be_tried_in_a_rollouts_box(
+    course_home: Path, capsys: Any
+) -> None:
+    task = course_home / "29-make-it-yours" / sandbox.RUNS_FOLDER / "x" / "task"
+    task.mkdir(parents=True)
+    (task / "data.csv").write_text("a,b\n")
+    assert sandbox.try_in_box(task, ["cat", "data.csv"], 8239) == 0
+    gold = tasks.tasks_path(0)
+    gold.parent.mkdir(parents=True)
+    gold.write_text("gold")
+    assert sandbox.try_in_box(task, ["cat", str(gold)], 8239) != 0
+    out = capsys.readouterr().out
+    assert "  a,b\n  exit 0" in out and "Operation not permitted" in out
+
+
+@pytest.mark.skipif(not sandbox.SANDBOX_EXEC.exists(), reason="needs sandbox-exec")
 def test_loopback_is_open_on_the_proxys_port_only(tmp_path: Path) -> None:
     task, state = tmp_path / "task", tmp_path / "state"
     for folder in (task, state):
