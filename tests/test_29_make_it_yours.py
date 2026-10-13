@@ -45,7 +45,9 @@ import install  # noqa: E402
 import lfm_files  # noqa: E402
 import make_csv_tasks  # noqa: E402
 import power  # noqa: E402
+import qwen_probe  # noqa: E402
 import run_one  # noqa: E402
+import sandbox  # noqa: E402
 import scripted_engine  # noqa: E402
 import sheet  # noqa: E402
 import stats  # noqa: E402
@@ -505,6 +507,114 @@ def test_a_refused_tool_call_is_counted(tmp_path: Path) -> None:
     says, errors, _ = run_one.read_qwen_log(log)
     assert says == "result success · 3 turns · 1 refused by its permission rules"
     assert errors[0].startswith('This "run_shell_command" invocation was denied')
+
+
+def test_every_run_hides_the_folder_of_gold_answers(
+    course_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: dict[str, Any] = {}
+
+    def capture(**kwargs: Any) -> dict[str, str]:
+        seen.update(kwargs)
+        raise sandbox.SandboxError("captured")
+
+    monkeypatch.setattr(run_one, "sandbox_params", capture)
+    folders = wire.RunFolders(task=tmp_path / "task", state=tmp_path / "state")
+    wiring = wire.wire(install.QWEN, folders, "t", "http://127.0.0.1:1", "k")
+    with pytest.raises(install.HarnessInstallError):
+        run_one.run_boxed(wiring, folders, 1)
+    assert seen["tasks_dir"] == tasks.gold_folder() == tasks.tasks_path(0).parent
+
+
+@pytest.mark.skipif(not sandbox.SANDBOX_EXEC.exists(), reason="needs sandbox-exec")
+def test_the_box_refuses_to_read_the_gold_answers(
+    seed_0: list[tasks.Task], tmp_path: Path
+) -> None:
+    task, state = tmp_path / "task", tmp_path / "state"
+    for folder in (task, state):
+        folder.mkdir()
+    gold = str(tasks.tasks_path(0))
+    hidden = sandbox.sandbox_params(
+        workdir=task, state_dir=state, tasks_dir=tasks.gold_folder()
+    )
+    refused = subprocess.run(
+        sandbox.sandbox_command(["cat", gold], params=hidden),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert refused.returncode != 0 and "Operation not permitted" in refused.stderr
+    # Chapter 24's default hides data/, where this family's gold is not.
+    default = sandbox.sandbox_params(workdir=task, state_dir=state)
+    read = subprocess.run(
+        sandbox.sandbox_command(["cat", gold], params=default),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert read.returncode == 0 and seed_0[0].question in read.stdout
+
+
+# ------------------------------------------------- qwen_probe.py
+
+
+def test_the_stand_in_model_looks_writes_then_stops() -> None:
+    first, second, third = (qwen_probe.reply_for(i) for i in range(3))
+    commands = [
+        json.loads(m["tool_calls"][0]["function"]["arguments"])["command"]
+        for m in (first, second)
+    ]
+    assert commands == ["head -3 data.csv", "echo 42 > answer.txt"]
+    assert third == qwen_probe.reply_for(9) == {"role": "assistant", "content": "42"}
+    start, end = qwen_probe.chunks_for(first)
+    assert start["choices"][0]["delta"]["tool_calls"][0]["index"] == 0
+    assert end["choices"][0]["finish_reason"] == "tool_calls"
+    assert qwen_probe.chunks_for(third)[1]["choices"][0]["finish_reason"] == "stop"
+
+
+def test_a_probe_variant_changes_one_thing(tmp_path: Path) -> None:
+    folders = wire.RunFolders(task=tmp_path / "task", state=tmp_path / "state")
+    base = wire.wire(install.QWEN, folders, "t", "http://127.0.0.1:1", "k")
+    proxy = "http://127.0.0.1:2"
+    own = qwen_probe.variant(base, proxy, switches=False, bare=True)
+    assert not set(own.env) & set(qwen_probe.QWEN_SWITCHES)
+    assert (
+        own.env["HTTPS_PROXY"] == proxy and own.env["NO_PROXY"] == "127.0.0.1,localhost"
+    )
+    assert own.argv == base.argv
+    plain = qwen_probe.variant(base, proxy, switches=True, bare=False)
+    assert set(qwen_probe.QWEN_SWITCHES) <= set(plain.env)
+    assert "--bare" not in plain.argv and len(plain.argv) == len(base.argv) - 1
+    less = qwen_probe.variant(base, proxy, switches=True, bare=True, also_excluded="x")
+    excluded = less.argv[less.argv.index("--exclude-tools") + 1].split(",")
+    assert excluded == [*wire.QWEN_EXCLUDED, "x"]
+
+
+def test_the_probe_reads_requests_and_outside_connections() -> None:
+    tool = {"type": "function", "function": {"name": "run_shell_command"}}
+    side = {"type": "function", "function": {"name": "glob"}}
+    probe = qwen_probe.Probe(
+        name="x",
+        requests=[
+            {"messages": [{"role": "user", "content": "hi"}], "tools": [tool],
+             "max_tokens": 32000},
+            {"messages": [], "tools": [side], "max_tokens": 32000},
+        ],
+        outside=["CONNECT a.example:443 HTTP/1.1", "CONNECT a.example:443 HTTP/1.1"],
+    )  # fmt: skip
+    lines = qwen_probe.request_lines(probe)
+    assert lines[0] == "  requests       2"
+    assert lines[2] == "  tools offered  1: run_shell_command"
+    assert lines[3] == "  max_tokens     32000 asked"
+    assert lines[4].endswith("other tools (after the last reply): glob")
+    assert qwen_probe.outside_lines(probe) == [
+        "  outside connections asked for: 2",
+        "    a.example:443 (refused by the catcher)",
+    ]
+    empty = qwen_probe.Probe(name="y")
+    assert qwen_probe.request_lines(empty) == [
+        "  no request reached the stand-in model"
+    ]
 
 
 # ------------------------------------------------- power.py
@@ -1007,3 +1117,21 @@ def test_qwen_code_solves_the_family_through_the_proxy(
     assert kept["facts"]["dialect"].startswith("openai_chat")
     assert kept["facts"]["log_says"] == "result success · 4 turns"
     assert (cell / "qwen-stream.jsonl").is_file()
+
+
+def test_the_qwen_probe_measures_what_it_does_around_the_model(
+    course_home: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    link_install(course_home, install.QWEN)
+    out = run_main(qwen_probe, ["qwen_probe.py"], monkeypatch, capsys)
+    sections = out.split("━━ ")
+    assert "rum.aliyuncs.com:443 (refused by the catcher)" in sections[1]
+    assert "outside connections asked for: 0" in sections[2]
+    assert "tools offered  3: edit, read_file, run_shell_command" in sections[3]
+    assert "max_tokens     32000 asked" in sections[3]
+    assert "requests       3" in sections[3] and "requests       4" in sections[4]
+    assert (
+        "tools offered  14:" in sections[4] and "(after the last reply)" in sections[4]
+    )
+    assert 'refused: This "run_shell_command" invocation was denied' in sections[5]
+    assert "echo 42 > answer.txt   ran" in sections[5]
