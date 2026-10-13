@@ -505,6 +505,23 @@ def test_a_projection_scales_the_memory_above_the_weights_by_its_growth() -> Non
     assert projected == pytest.approx(1.6 * GB + 5.6 * GB * 8192 / 6144)
 
 
+def test_two_fused_passes_fit_a_curve_that_still_over_estimates() -> None:
+    fused = memory_probe.BY_NAME["fused"]
+
+    def truth(length: int) -> float:  # weights, linear activations, L x L scores
+        return 1.6 * GB + 0.5e6 * length + 300.0 * length**2
+
+    history = [(1024, truth(1024)), (1280, truth(1280))]
+    projected, basis = memory_probe.project(fused, 4096, history, 1.6 * GB, SHAPE)
+    assert basis == "a + c x L^2 through the 1,024 and 1,280-token passes"
+    assert truth(4096) < projected  # the safe side
+    one_point, _ = memory_probe.project(fused, 4096, history[1:], 1.6 * GB, SHAPE)
+    assert projected < one_point  # by less than scaling everything by L^2
+    flat = [(1024, 3 * GB), (1280, 3 * GB)]  # no curve to fit: scale instead
+    _, basis = memory_probe.project(fused, 2048, flat, 1.6 * GB, SHAPE)
+    assert basis.startswith("from the 1,280-token pass")
+
+
 def test_a_first_projection_is_a_generous_count_and_grows_with_the_row() -> None:
     for setting in memory_probe.SETTINGS:
         small, basis = memory_probe.project(setting, 1024, [], 1.6 * GB, SHAPE)

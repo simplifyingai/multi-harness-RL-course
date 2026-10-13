@@ -76,7 +76,9 @@ from training import (
 )
 
 SCRIPT = "memory_probe.py"
-LENGTHS = (1024, 2048, 4096, 6144, 8192)
+# 1,280 gives every setting a second short pass, so fused attention's L x L
+# curve can be fitted before a longer row is tried (see project).
+LENGTHS = (1024, 1280, 2048, 4096, 6144, 8192)
 BUDGET_GB = 9.0  # the trainer's share of the laptop (the project's "8-10 GB")
 KEEP_FREE_PERCENT = 15.0  # of the machine's memory, left to everything else
 PERCENT = 100.0
@@ -105,6 +107,8 @@ FREE_PERCENT_RE = re.compile(r"memory free percentage: (\d+)%")
 NAME_COLUMN = 12
 CELL_COLUMN = 9
 NO_MEASUREMENT = "before any pass: a generous count of the arrays it makes"
+QUADRATIC = 2  # a setting whose memory grows with the square of the length
+TWO_PASSES = 2  # passes a curve needs before it can be fitted
 FAILED_PREFIX = "failed:"  # a pass that ran and raised, as opposed to refused
 
 
@@ -313,6 +317,13 @@ def project(
     settings. Scaling all of it, not only the part that grows that fast,
     overestimates, which is the safe side for a refusal.
 
+    That rule makes one fused pass at 1,024 tokens project 2,048 at four
+    times its memory above the weights. With two fused passes the probe
+    fits ``a + c x L^2`` through them instead: when the real curve is
+    ``a + b x L + c x L^2`` with b above 0 (stored activations grow with L),
+    that fit puts the linear part into c and over-estimates every longer
+    row, still the safe side, by less.
+
     Args:
         setting: The setting.
         length: The row's length.
@@ -328,6 +339,16 @@ def project(
     # The lengths run shortest first (length_list sorts them), so the last
     # pass is shorter and the factor is above 1: a projection never shrinks.
     last_length, last_peak = history[-1]
+    if setting.growth == QUADRATIC and len(history) >= TWO_PASSES:
+        (first_length, first_peak) = history[-2]
+        curve = (last_peak - first_peak) / (last_length**2 - first_length**2)
+        if curve > 0:
+            fitted = last_peak + curve * (length**2 - last_length**2)
+            basis = (
+                f"a + c x L^2 through the {first_length:,} and {last_length:,}-token "
+                "passes"
+            )
+            return fitted, basis
     factor = (length / last_length) ** setting.growth
     above = max(last_peak - baseline, 0.0)
     basis = f"from the {last_length:,}-token pass, x{factor:.2f} above the weights"
