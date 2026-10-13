@@ -78,12 +78,9 @@ COPIED = (
     "lfm_files.py",
     "lfm_template.py",
     "lfm_text.py",
-    "loopback.py",
     "mini-swe-agent-requirements.txt",
     "policy.py",
     "proxy-requirements.txt",
-    "sandbox.py",
-    "sandbox.sb",
     "scripted_engine.py",
     "scripted_replies.py",
     "stats.py",
@@ -544,8 +541,10 @@ def test_the_box_refuses_to_read_the_gold_answers(
         check=False,
     )
     assert refused.returncode != 0 and "Operation not permitted" in refused.stderr
-    # Chapter 24's default hides data/, where this family's gold is not.
-    default = sandbox.sandbox_params(workdir=task, state_dir=state)
+    # Chapter 24's choice hides data/, where this family's gold is not.
+    default = sandbox.sandbox_params(
+        workdir=task, state_dir=state, tasks_dir=tasks.DATA_DIR
+    )
     read = subprocess.run(
         sandbox.sandbox_command(["cat", gold], params=default),
         capture_output=True,
@@ -553,6 +552,85 @@ def test_the_box_refuses_to_read_the_gold_answers(
         check=False,
     )
     assert read.returncode == 0 and seed_0[0].question in read.stdout
+
+
+def box_run(params: dict[str, str], cwd: Path, command: str) -> tuple[int, str]:
+    """Run one shell command in the box.
+
+    Args:
+        params: The profile's parameters.
+        cwd: Where it runs.
+        command: The command.
+
+    Returns:
+        Its exit status and its output, both streams.
+    """
+    argv = sandbox.sandbox_command(["/bin/bash", "-c", command], params=params)
+    done = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, check=False)
+    return done.returncode, done.stdout + done.stderr
+
+
+@pytest.mark.skipif(not sandbox.SANDBOX_EXEC.exists(), reason="needs sandbox-exec")
+def test_another_cells_folder_and_the_records_are_unreadable(
+    course_home: Path, tmp_path: Path
+) -> None:
+    chapter = course_home / "29-make-it-yours"
+    other = chapter / sandbox.RUNS_FOLDER / "eval" / "scripted-solve" / "pi" / "t1"
+    mine = chapter / sandbox.RUNS_FOLDER / "eval" / "base" / "pi" / "t2"
+    records = chapter / sandbox.FAMILY_FOLDER / "base" / "mini-swe-agent.jsonl"
+    for folder in (other, mine / "task", records.parent):
+        folder.mkdir(parents=True)
+    (other / "rollout.json").write_text("echo 13 > answer.txt")
+    records.write_text("expected '13'")
+    (mine / "task" / "data.csv").write_text("a,b\n")
+    state = tmp_path / "state"
+    state.mkdir()
+    params = sandbox.sandbox_params(workdir=mine / "task", state_dir=state)
+    task = mine / "task"
+    for command in (
+        "cat ../../../../scripted-solve/pi/t1/rollout.json",
+        f"cat {records}",
+        f"cat {sandbox.REPO_DIR / '29-make-it-yours' / 'make_csv_tasks.py'}",
+    ):
+        status, said = box_run(params, task, command)
+        assert status != 0 and "Operation not permitted" in said, command
+    # Its own files, the path to them, and the folders' names still work.
+    assert box_run(params, task, "cat data.csv && echo 7 > answer.txt") == (0, "a,b\n")
+    status, said = box_run(params, task, "pwd && ls ../../../../scripted-solve/pi/t1")
+    assert status == 0 and said.split() == [str(task.resolve()), "rollout.json"]
+    assert "getcwd" not in said
+
+
+@pytest.mark.skipif(not sandbox.SANDBOX_EXEC.exists(), reason="needs sandbox-exec")
+def test_loopback_is_open_on_the_proxys_port_only(tmp_path: Path) -> None:
+    task, state = tmp_path / "task", tmp_path / "state"
+    for folder in (task, state):
+        folder.mkdir()
+    with contextlib.ExitStack() as stack:
+        ports = []
+        for _ in range(2):
+            server = qwen_probe.Catcher()  # any listener will do
+            stack.enter_context(qwen_probe.serving(server))
+            ports.append(server.server_address[1])
+        params = sandbox.sandbox_params(
+            workdir=task, state_dir=state, proxy_port=ports[0]
+        )
+        connect = "exec 3<>/dev/tcp/127.0.0.1/{port} && echo open"
+        assert box_run(params, task, connect.format(port=ports[0]))[0] == 0
+        assert box_run(params, task, connect.format(port=ports[1]))[0] != 0
+
+
+def test_a_contents_rule_may_hold_the_task_folder_but_not_sit_inside_it(
+    tmp_path: Path,
+) -> None:
+    task = tmp_path / "runs" / "t1" / "task"
+    task.mkdir(parents=True)
+    assert (
+        sandbox.check_contents_root(tmp_path / "runs", [task])
+        == (tmp_path / "runs").resolve()
+    )
+    with pytest.raises(sandbox.UnsafeSandboxPathError, match="inside"):
+        sandbox.check_contents_root(task / "deeper", [task.resolve()])
 
 
 # ------------------------------------------------- qwen_probe.py
@@ -582,6 +660,9 @@ def test_a_probe_variant_changes_one_thing(tmp_path: Path) -> None:
         own.env["HTTPS_PROXY"] == proxy and own.env["NO_PROXY"] == "127.0.0.1,localhost"
     )
     assert own.argv == base.argv
+    assert own.proxy_port == base.proxy_port == 1
+    alone = qwen_probe.variant(base, None, switches=False, bare=True)
+    assert not set(alone.env) & {"HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY"}
     plain = qwen_probe.variant(base, proxy, switches=True, bare=False)
     assert set(qwen_probe.QWEN_SWITCHES) <= set(plain.env)
     assert "--bare" not in plain.argv and len(plain.argv) == len(base.argv) - 1
@@ -607,6 +688,7 @@ def test_the_probe_reads_requests_and_outside_connections() -> None:
     assert lines[2] == "  tools offered  1: run_shell_command"
     assert lines[3] == "  max_tokens     32000 asked"
     assert lines[4].endswith("other tools (after the last reply): glob")
+    probe.exit_code = 0
     assert qwen_probe.outside_lines(probe) == [
         "  outside connections asked for: 2",
         "    a.example:443 (refused by the catcher)",
@@ -615,6 +697,38 @@ def test_the_probe_reads_requests_and_outside_connections() -> None:
     assert qwen_probe.request_lines(empty) == [
         "  no request reached the stand-in model"
     ]
+
+
+def test_a_zero_says_what_it_could_and_could_not_see() -> None:
+    body = {"messages": [], "tools": []}
+    quiet = qwen_probe.Probe(name="q", requests=[body], exit_code=0, refused=1)
+    assert qwen_probe.outside_lines(quiet) == [
+        "  outside connections asked for: 0 (through HTTPS_PROXY only; a client "
+        "that ignores it is stopped by the sandbox and not seen here)"
+    ]
+    assert qwen_probe.sandbox_line(quiet).endswith(
+        "refused 1 direct connections (its own log)"
+    )
+    for broken in (
+        qwen_probe.Probe(name="b", requests=[body], exit_code=1),
+        qwen_probe.Probe(name="c", exit_code=0),
+    ):
+        lines = qwen_probe.outside_lines(broken)
+        assert lines[0] == "  run did not complete: 0 means unobserved"
+    assert qwen_probe.sandbox_line(qwen_probe.Probe(name="d")).endswith(
+        "log unreadable"
+    )
+
+
+def test_the_sandbox_log_is_counted_for_the_harness_process_only() -> None:
+    text = (
+        "2026-10-14 01:36:58.899 E  kernel[0:1] Sandbox: node(4242) deny(1) "
+        "network-outbound remote:*:443\n"
+        "2026-10-14 01:36:59.000 E  kernel[0:1] Sandbox: curl(99) deny(1) "
+        "network-outbound remote:*:80\n"
+    )
+    pattern = qwen_probe.DENY_RE.format(pid=4242)
+    assert len(re.findall(pattern, text)) == 1
 
 
 # ------------------------------------------------- power.py
@@ -816,10 +930,22 @@ def test_a_partial_run_says_so_before_its_score(
 ) -> None:
     path = try_family.records_path("base", "mini-swe-agent")
     evaluate.append_record(path, record(seed_0[0].task_id, True, n_calls=4))
+    evaluate.append_record(path, record(seed_0[10].task_id, False))  # not in this run
     records, _ = try_family.report(path, seed_0[:3], "mini-swe-agent", "base", 1.0, 0.1)
     out = capsys.readouterr().out
     assert len(records) == 1
+    assert "OTHERS    1 more in the file for tasks outside this run" in out
     assert out.index("PARTIAL   1 of 3 tasks recorded") < out.index("score     1/1")
+    assert try_family.score_lines([], seed_0[:3], 0.1) == ["score     none recorded"]
+
+
+def test_mini_swe_agent_reads_its_config_from_its_own_folder(tmp_path: Path) -> None:
+    folders = wire.RunFolders(task=tmp_path / "task", state=tmp_path / "state")
+    wiring = wire.wire(install.MINI, folders, "t", "http://127.0.0.1:8239", "k")
+    config = folders.state / "mini_swe_agent.yaml"
+    assert wiring.argv[wiring.argv.index("-c") + 1] == str(config)
+    assert wiring.files[config] == wire.MINI_CONFIG.read_text(encoding="utf-8")
+    assert wiring.proxy_port == 8239
 
 
 def test_against_reads_two_runs_cell_by_cell(
@@ -1093,7 +1219,7 @@ def test_the_family_runs_in_mini_swe_agent_through_the_proxy(
         assert item.first_prompt and item.domain == "sales"
     assert "score     3/3 = 100.0%" in out
     assert "power     no room for +10 points from 100.0%" in out
-    assert out.rstrip().endswith("lsof saw only this machine's addresses")
+    assert out.rstrip().endswith("lsof saw only this machine's addresses (sampled)")
     again, _ = run_family(proxy_url, monkeypatch, capsys, "--limit", "3", "--resume")
     assert again.count("already recorded") == 3
     with pytest.raises(SystemExit, match="this run's own label"):
@@ -1126,12 +1252,14 @@ def test_the_qwen_probe_measures_what_it_does_around_the_model(
     out = run_main(qwen_probe, ["qwen_probe.py"], monkeypatch, capsys)
     sections = out.split("━━ ")
     assert "rum.aliyuncs.com:443 (refused by the catcher)" in sections[1]
-    assert "outside connections asked for: 0" in sections[2]
-    assert "tools offered  3: edit, read_file, run_shell_command" in sections[3]
-    assert "max_tokens     32000 asked" in sections[3]
-    assert "requests       3" in sections[3] and "requests       4" in sections[4]
+    assert "outside connections asked for: 0 (through HTTPS_PROXY only" in sections[2]
+    assert "outside connections asked for: 0 (through HTTPS_PROXY only" in sections[3]
+    assert "tools offered  3: edit, read_file, run_shell_command" in sections[4]
+    assert "max_tokens     32000 asked" in sections[4]
+    assert "requests       3" in sections[4] and "requests       4" in sections[5]
     assert (
-        "tools offered  14:" in sections[4] and "(after the last reply)" in sections[4]
+        "tools offered  14:" in sections[5] and "(after the last reply)" in sections[5]
     )
-    assert 'refused: This "run_shell_command" invocation was denied' in sections[5]
-    assert "echo 42 > answer.txt   ran" in sections[5]
+    assert 'refused: This "run_shell_command" invocation was denied' in sections[6]
+    assert "echo 42 > answer.txt   ran" in sections[6]
+    assert all("sandbox        " in section for section in sections[1:7])
