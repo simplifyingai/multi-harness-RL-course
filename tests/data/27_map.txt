@@ -1,0 +1,183 @@
+map.py · each chapter beside the project code it mirrors
+project   the bundled snapshot of multi-harness-rl at 25074c0 (OpenEnv 3f14355)
+          --project PATH or MHRL_PROJECT measures a checkout instead
+lines     a file's lines (wc -l) · each name's, from its def to its end
+kinds     copy: the project's code line for line · cut down: the same steps, less around them
+          toy: the idea on the toy, full size in the project · runs: the chapter runs or reads it
+
+Part 1 · The job, and RL from zero on a toy analyst
+01 the-job · copy · tasks.py, grader.py, make_tasks.py
+   the tasks, the grader, the generator, the five databases
+   mhrl/tasks/core.py              502  load_tasks 45 · task_instruction 22 · prepare_workdir 26
+                                        grade 33 · check_answer 42
+   mhrl/tasks/generate.py          386  generate_tasks 39
+   mhrl/tasks/questions.py       2,362  draw_instances 53 · resolve_answer 26
+   mhrl/tasks/databases.py       1,373  build_database 28
+02 plain-rl · toy · bandit.py
+   a reward of 1 or 0; sample at temperature 1, measure greedily
+   mhrl/rollout.py                 336  reward_for 17
+   mhrl/config.py                  107  Settings.train_temperature 1 · Settings.eval_temperature 1
+03 policy-gradient · toy · reinforce.py, baseline.py
+   REINFORCE with a baseline: the GRPO loss at ratio 1
+   mhrl/training/grpo.py           270  train_grpo.loss_fn 6
+   mhrl/training/common.py         237  token_logprobs 25
+04 episodes · toy · minianalyst.py, environment.py
+   8 calls, one reward; every call shares the rollout's advantage
+   mhrl/rollout.py                 336  run_rollout 89
+   mhrl/config.py                  107  Settings.max_model_calls 1
+   mhrl/training/common.py         237  item_from_sequence 18
+
+Part 2 · The project's algorithms, still on the toy
+05 grpo-groups · copy · grpo.py, grpo_groups.py
+   group advantages; a group without contrast is skipped
+   mhrl/training/grpo.py           270  group_advantages 14 · train_grpo 186
+   mhrl/config.py                  107  Defaults.ADVANTAGE_EPS 1
+06 ratio-and-clip · copy · grpo.py, grpo_clip.py
+   the importance ratio and the clip at 0.8-1.2
+   mhrl/training/grpo.py           270  train_grpo.loss_fn 6
+   mhrl/config.py                  107  Defaults.CLIP_EPSILON 1
+07 reward-design · copy · rewards.py, reward_lab.py, real_run.py
+   the call bonus that backfired and the token bonus that replaced it
+   mhrl/rollout.py                 336  tool_bonus 13 · token_bonus 17 · reward_for 17
+   mhrl/config.py                  107  Settings.token_budget 1 · Settings.length_guard_tokens 1
+   mhrl/cli.py                     322  CliDefaults.GRPO_LR 1
+08 sft-toy · toy · sft.py, teacher.py, sft_toy.py
+   imitation: the teacher's four paths and the SFT loss
+   mhrl/engine/oracle.py           270  AnswerKeyTeacher._steps 55
+   mhrl/training/sft.py            178  train_sft.loss_fn 2
+   mhrl/training/common.py         237  batches 15
+   mhrl/cli.py                     322  CliDefaults.SFT_LR 1
+
+Part 3 · The model on your laptop
+09 tokens-and-templates · cut down · template.py, count.py
+   the chat template and the 16,384-token prompt limit
+   mhrl/engine/policy.py           448  PolicyEngine.render 21
+   mhrl/config.py                  107  Defaults.END_OF_TURN 1 · Defaults.TOOL_CALL_START 1
+                                        Defaults.TOOL_CALL_END 1 · Settings.max_prompt_tokens 1
+   mhrl/engine/server.py           234  create_app.chat 40
+10 meet-lfm · runs · download.py, inside.py
+   the download setup.sh makes, and the model the engine loads
+   scripts/setup.sh                 16  the whole file
+   mhrl/config.py                  107  Settings.model_path 1
+11 quantize · runs · convert.py
+   builds the 4-bit file the project downloads ready-made
+   scripts/setup.sh                 16  the whole file
+   mhrl/config.py                  107  Settings.model_path 1
+12 generate · cut down · sample_lab.py, timing.py
+   full-distribution sampling, float32 logprobs, the 1,024 cap
+   mhrl/engine/policy.py           448  PolicyEngine._sampler 13 · PolicyEngine._sample 63
+                                        _to_float32 12
+   mhrl/config.py                  107  Defaults.PREFILL_STEP 1 · Settings.max_completion_tokens 1
+
+Part 4 · Training the real model where we own the loop
+13 lora · copy · lora.py, lora_lab.py, adam_steps.py
+   the adapter: rank 16, scale 2.0, the last 12 layers
+   mhrl/lora.py                    116  apply_lora 25 · save_adapter 13 · load_adapter 14
+                                        zero_adapter 13
+   mhrl/engine/policy.py           448  PolicyEngine.set_adapter 20
+   mhrl/config.py                  107  Settings.lora_rank 1 · Settings.lora_scale 1
+                                        Settings.lora_layers 1
+14 sft-real-model · cut down · sft.py, rows.py, train_sft.py
+   rows with a loss mask, scored in one pass
+   mhrl/training/sft.py            178  train_sft 71 · demo_items 19
+   mhrl/training/common.py         237  TrainItem 19 · item_from_sequence 18 · token_logprobs 25
+15 grpo-real-model · cut down · grpo.py, grpo_sql.py, rewards.py
+   GRPO with the harness taken out: one reply per rollout
+   mhrl/training/grpo.py           270  train_grpo 186 · group_advantages 14
+   mhrl/rollout.py                 336  reward_for 17 · token_bonus 17
+   mhrl/training/common.py         237  token_logprobs 25
+
+Part 5 · Inside a harness
+16 inside-claude-code · runs · run_claude.sh, stand_in.py
+   the real Claude Code 2.1.290 with the project's flags
+   mhrl/harnesses/claude_code.py   207  PINNED_VERSION 1 · ClaudeCode.command 34
+                                        ClaudeCode.environment 27
+17 tiny-harness · cut down · toolcalls.py, tiny_harness.py
+   a tool call read out of the model's text
+   mhrl/engine/toolcalls.py        187  split_reply 19 · parse_calls 36
+   configs/harnesses/mini_swe_agent_textbased.yaml  156  the whole file
+18 engine · cut down · engine.py, policy.py
+   an OpenAI-style engine that returns token ids and logprobs
+   mhrl/engine/policy.py           448  PolicyEngine.render 21 · PolicyEngine.generate 38
+                                        PolicyEngine._remember 11 · PolicyEngine._restore 26
+   mhrl/engine/server.py           234  to_openai 53 · create_app.chat 40 · MLX_THREADS 1
+19 sandbox · copy · sandbox.sb, sandbox.py, process.py, grade_safe.py
+   sandbox-exec, the process tree, a grader that follows no link
+   configs/harnesses/sandbox.sb    103  the whole file
+   mhrl/harnesses/sandbox.py       206  sandbox_command 40 · sandbox_params 33
+                                        check_writable_root 34
+   mhrl/harnesses/process.py       333  run_logged 74 · kill_tree 42
+   mhrl/tasks/core.py              502  grade 33
+   mhrl/config.py                  107  Settings.rollout_timeout_s 1
+
+Part 6 · Capturing real harnesses
+20 capture-proxy · cut down · capture_client.py, start.sh
+   a session per rollout; its id is the harness's API key
+   mhrl/rollout.py                 336  CaptureClient.open_session 34 · CaptureClient.rollout 12
+                                        CaptureClient.close 7
+   scripts/serve.sh                 60  start 12
+21 calls-to-rows · cut down · training_rows.py, rollout_view.py
+   the rollout document, cut into training rows
+   openenv/graph.py                496  the whole file
+   openenv/export.py               246  the whole file
+   openenv/validate.py             439  the whole file
+   mhrl/rollout.py                 336  count_calls 13 · run_rollout 89
+   mhrl/training/common.py         237  dedupe_shared_prefixes 33 · item_from_sequence 18
+22 silent-capture-failures · cut down · breakages.py, crosscheck.py
+   a broken prefix splits a rollout into many rows
+   openenv/graph.py                496  the whole file
+   openenv/export.py               246  the whole file
+   openenv/validate.py             439  the whole file
+   mhrl/rollout.py                 336  count_calls 13 · run_rollout 89
+   mhrl/training/common.py         237  dedupe_shared_prefixes 33 · item_from_sequence 18
+   mhrl/harnesses/smoke.py         205  smoke_once 50
+   mhrl/harnesses/claude_code.py   207  REMINDER_OFF 1
+23 three-harnesses · cut down · wire.py, run_one.py, mini_swe_agent.yaml
+   three unmodified harnesses, wired by configuration only
+   mhrl/harnesses/base.py          422  Harness.run 80 · base_environment 30 · get_harness 21
+   mhrl/harnesses/mini_swe_agent.py  199  MiniSweAgent 146
+   mhrl/harnesses/claude_code.py   207  ClaudeCode 126
+   mhrl/harnesses/pi.py            248  Pi 172
+   configs/harnesses/mini_swe_agent.yaml  130  the whole file
+
+Part 7 · Training inside real harnesses, measured honestly
+24 measuring · copy · evaluate.py, baseline_eval.py, noise.py
+   pass@1 per harness on a balanced held-out set
+   mhrl/evaluate.py                129  evaluate 46 · summarize 29
+   mhrl/cli.py                     322  balanced 24 · `eval`
+25 sft-in-harnesses · cut down · teacher.py, collect.py, train_sft.py, memory_probe.py
+   the answer-key teacher, SFT on captured rows, attention in blocks
+   mhrl/engine/oracle.py           270  AnswerKeyTeacher 202
+   mhrl/training/sft.py            178  collect_demonstrations 40 · demo_items 19 · train_sft 71
+   mhrl/training/common.py         237  chunked_attention 49 · load_policy 20 · token_logprobs 25
+26 grpo-in-harnesses · cut down · grpo_harness.py, steps.py, replay.py
+   GRPO through the harnesses, and the length guard
+   mhrl/training/grpo.py           270  train_grpo 186 · group_advantages 14
+   mhrl/rollout.py                 336  run_rollout 89 · reward_for 17 · tool_bonus 13
+   mhrl/cli.py                     322  print_steps 37 · `steps`
+27 how-it-combines · runs · map.py, one_step.py, stack.sh
+   this chapter: the settings, the command line, one real step
+   mhrl/config.py                  107  Settings 55 · Defaults 23 · get_settings 7
+   mhrl/cli.py                     322  main 88 · CliDefaults 14 · `demo` · `eval` · `demos` · `sft`
+                                        `grpo` · `steps` · `report`
+   mhrl/training/grpo.py           270  train_grpo 186 · use_adapter 13
+   mhrl/rollout.py                 336  run_rollout 89
+   scripts/serve.sh                 60  start 12 · stop 13 · status 5
+   mhrl/harnesses/smoke.py         205  smoke_once 50 · main 28
+   tests/test_core.py              129  the whole file
+   tests/test_harnesses.py         713  the whole file
+   tests/test_oracle.py            123  the whole file
+   tests/test_tasks.py             670  the whole file
+28 capstone · runs · (not written yet)
+   next: the whole pipeline, from a fresh clone
+   scripts/train_from_scratch.sh    49  the whole file
+   mhrl/evaluate.py                129  format_table 21
+   mhrl/cli.py                     322  markdown_results 32 · `report`
+
+the project's code: 41 files, 11,460 lines; chapters 1-26 mirror 28 files, 9,742 lines (85.0%)
+left for this chapter and the next
+   scripts/train_from_scratch.sh 49 · tests/test_core.py 129 · tests/test_harnesses.py 713
+   tests/test_oracle.py 123 · tests/test_tasks.py 670
+mirrored by no chapter
+   main.py 6 · mhrl/harnesses/__init__.py 5 · mhrl/harnesses/errors.py 23
+   5 empty __init__.py files
