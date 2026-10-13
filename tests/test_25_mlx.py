@@ -522,6 +522,13 @@ def test_two_fused_passes_fit_a_curve_that_still_over_estimates() -> None:
     assert basis.startswith("from the 1,280-token pass")
 
 
+def test_a_fit_from_two_close_passes_never_projects_below_linear_growth() -> None:
+    fused = memory_probe.BY_NAME["fused"]
+    noisy = [(1024, 3.000 * GB), (1280, 3.001 * GB)]  # 1 MB apart: c is noise
+    projected, _ = memory_probe.project(fused, 2048, noisy, 1.6 * GB, SHAPE)
+    assert projected == pytest.approx(1.6 * GB + 1.401 * GB * 2048 / 1280)
+
+
 def test_a_first_projection_is_a_generous_count_and_grows_with_the_row() -> None:
     for setting in memory_probe.SETTINGS:
         small, basis = memory_probe.project(setting, 1024, [], 1.6 * GB, SHAPE)
@@ -685,6 +692,21 @@ def test_the_probe_refuses_everything_over_a_tiny_budget_without_running(
     assert out.count("refused ·") == 6  # 3 settings x 2 lengths
     assert "over the 0.00 GB budget" in out
     assert "nothing was measured: every row was refused or failed" in out
+
+
+def test_keep_free_is_a_percent_and_says_when_it_cannot_apply(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any, tmp_path: Path
+) -> None:
+    for wrong in ("100", "-1"):
+        argv = ["memory_probe.py", "--keep-free", wrong]
+        with pytest.raises(SystemExit, match="--keep-free is a percent"):
+            run_main(memory_probe, argv, monkeypatch, capsys)
+    monkeypatch.setattr(memory_probe, "pick_model", lambda fast: (tmp_path, "tiny"))
+    monkeypatch.setattr(memory_probe, "load_model", lambda folder: adapted())
+    monkeypatch.setattr(memory_probe, "free_bytes", lambda read=None: None)
+    argv = ["memory_probe.py", "--lengths", "24", "--settings", "chunked"]
+    out = run_main(memory_probe, argv, monkeypatch, capsys)
+    assert "machine free now unknown (so --keep-free 15% cannot be applied)" in out
 
 
 def test_the_probe_will_not_start_beside_this_chapters_engine(

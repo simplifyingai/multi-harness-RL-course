@@ -31,7 +31,8 @@ each pass it PROJECTS the peak (from the setting's last measured pass,
 scaled by how that setting grows, or, before any, from a generous count of
 the arrays the pass makes) and refuses, with the reason printed, any row
 projected over the budget (9.0 GB) or over what the machine has free right
-now, less 15% of its memory left for everything else. Fused attention runs
+now, less the ``--keep-free`` share of its memory (15% by default) left for
+everything else. Fused attention runs
 only up to 4,096 tokens; at 6,144 the probe shows the project's recorded
 11.9 GB instead of measuring it again. It also refuses to start while this
 chapter's engine (``./start.sh``) holds the model's memory.
@@ -344,6 +345,10 @@ def project(
         curve = (last_peak - first_peak) / (last_length**2 - first_length**2)
         if curve > 0:
             fitted = last_peak + curve * (length**2 - last_length**2)
+            # Two close passes can put noise into c: never project below what
+            # linear growth from the last pass would need.
+            linear = baseline + max(last_peak - baseline, 0.0) * length / last_length
+            fitted = max(fitted, linear)
             basis = (
                 f"a + c x L^2 through the {first_length:,} and {last_length:,}-token "
                 "passes"
@@ -806,6 +811,8 @@ def main() -> None:
     baseline = float(mx.get_active_memory())
     free = free_bytes()
     free_text = "unknown" if free is None else f"{free / GIGABYTE:.1f} GB"
+    if free is None and args.keep_free:
+        free_text += f" (so --keep-free {args.keep_free:g}% cannot be applied)"
     print(
         f"  weights   {baseline / GIGABYTE:.2f} GB in MLX after loading · "
         f"machine free now {free_text}"

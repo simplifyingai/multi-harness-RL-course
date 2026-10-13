@@ -737,6 +737,26 @@ def test_the_file_ends_in_job_order_whatever_order_rollouts_ended(
     assert not path.with_suffix(".tmp").exists()
 
 
+def test_ordering_survives_no_file_a_broken_line_and_repeated_pairs(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "demos.jsonl"
+    collect.put_in_order(path, [("claude-code", "a")])  # every rollout failed
+    assert not path.exists()
+    base = collect.DemoRecord(**captured()[0])
+    first = replace(base, harness="claude-code", task_id="a", session_id="one")
+    second = replace(first, session_id="two")  # the same pair, run again
+    for record in (replace(base, task_id="z"), first, second):
+        collect.append_record(path, record)
+    collect.put_in_order(path, [("claude-code", "a")])
+    found = [(r.task_id, r.session_id) for r in collect.read_demos(path)]
+    assert found == [("a", "one"), ("a", "two"), ("z", base.session_id)]
+    with path.open("a") as handle:
+        handle.write('{"task_id": "torn')
+    with pytest.raises(ValueError, match="demos.jsonl:4"):
+        collect.put_in_order(path, [])
+
+
 def test_a_failed_rollout_is_said_and_a_dead_proxy_stops_the_rest(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

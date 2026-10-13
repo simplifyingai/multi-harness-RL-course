@@ -30,9 +30,9 @@ record is appended to ``COURSE_HOME/25-sft-in-harnesses/demos/demos.jsonl``
 the moment its rollout ends, and at the end the file is put in job order
 (each task, then each harness, the project's order), so the trainer's batches
 never depend on which rollout ended first. Then the script prints how many
-demonstrations
-are usable (correct and trainable) and one captured Claude Code row, segment
-by segment, with its mask.
+demonstrations are usable (correct and trainable) and one captured Claude
+Code row, segment by segment, with its mask. One collector writes to the
+file at a time: run a second one only after the first has finished.
 
 Start the teacher and the proxy first (``./start.sh oracle``; no model is
 loaded). ``--limit 60`` is the project's run (120 demonstrations),
@@ -98,6 +98,7 @@ FAST_LIMIT = 10
 CONCURRENCY = 4  # the project's settings.concurrency
 DEMOS_FOLDER = "demos"  # COURSE_HOME/25-sft-in-harnesses/demos/demos.jsonl
 DEMOS_FILE = "demos.jsonl"
+TEMPORARY_SUFFIX = ".tmp"  # the rewrite in job order, before it replaces the file
 HTTP_TIMEOUT_S = 10
 HARNESS_COLUMN = 14
 TASK_COLUMN = 19  # "library-medium-001" and a space
@@ -534,24 +535,28 @@ def put_in_order(path: Path, order: list[tuple[str, str]]) -> None:
     starts from: left as they ended, two identical collections would train
     two different adapters. In job order (each task, then each harness, as
     the project's ``collect_demonstrations`` writes them) the file is the
-    same on every run. The new file replaces the old one whole, at once.
+    same on every run. The new file replaces the old one whole, at once, so a
+    crash halfway leaves the old file. One collector at a time: a record
+    another process appended between the read and the replace would be lost.
 
     Args:
-        path: The demonstrations file.
+        path: The demonstrations file (nothing to do when there is none:
+            every rollout of a first run may have failed).
         order: ``(harness, task_id)`` pairs in job order; any record not in
             it (an earlier run's other tasks) follows, in its own order.
+
+    Raises:
+        ValueError: If a line is not a demonstration (the message names it).
     """
-    lines = [line for line in path.read_text("utf-8").splitlines() if line.strip()]
+    if not path.is_file():
+        return
+    records = read_demos(path)  # a broken line is named, as everywhere else
     rank = {pair: index for index, pair in enumerate(order)}
-
-    def position(line: str) -> int:
-        """Where a record goes: its job's place, or after every job."""
-        record = json.loads(line)
-        return rank.get((record["harness"], record["task_id"]), len(rank))
-
-    lines.sort(key=position)  # a stable sort keeps the rest in file order
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text("".join(line + "\n" for line in lines), "utf-8")
+    # A stable sort: records outside the order keep their file order, last.
+    records.sort(key=lambda r: rank.get((r.harness, r.task_id), len(rank)))
+    temporary = path.with_suffix(TEMPORARY_SUFFIX)
+    lines = "".join(json.dumps(asdict(record)) + "\n" for record in records)
+    temporary.write_text(lines, "utf-8")
     os.replace(temporary, path)
 
 
@@ -856,7 +861,10 @@ def main() -> None:
     _, failed = collect(jobs, setup, out_file, args.concurrency)
     # Read back from the file: a resumed run's earlier records count too.
     order = [(h, t.task_id) for t in tasks for h in args.harnesses]
-    put_in_order(out_file, order)
+    try:
+        put_in_order(out_file, order)
+    except ValueError as error:
+        raise SystemExit(f"collect.py: {error}") from error
     wanted = set(order)
     records = [r for r in read_demos(out_file) if (r.harness, r.task_id) in wanted]
     good = sum(1 for r in records if r.usable)

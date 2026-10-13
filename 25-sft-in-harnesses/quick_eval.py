@@ -533,8 +533,8 @@ def report(
     summaries = {BASE: summarize(before, harnesses), label: summarize(after, harnesses)}
     print_heading("both checkpoints, on the same cells")
     say(format_table(summaries, harnesses))
-    for label, summary in summaries.items():
-        say(f"{label:<5} {solved_calls(summary, harnesses)}")
+    for name, summary in summaries.items():
+        say(f"{name:<5} {solved_calls(summary, harnesses)}")
     for line in calls_lines(before, after, harnesses, label):
         say(line)
     pair = (Checkpoint(BASE, tuple(before)), Checkpoint(label, tuple(after)))
@@ -571,6 +571,8 @@ def main() -> None:
     except ProxyError as error:
         raise SystemExit(f"{error}: start the stack first (./start.sh)") from error
     check_engine(engine_url)
+    if args.label != SFT and args.adapter is None:
+        print(f"note: --label {args.label} names train_sft.py's default adapter")
     print(f"{SCRIPT} · base against SFT on the same held-out cells")
     print(
         f"  tasks     {len(tasks)} held-out tasks per harness, round-robin over "
