@@ -40,8 +40,10 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import re
 import shutil
+import signal
 import socketserver
 import subprocess
 import tempfile
@@ -88,11 +90,18 @@ RULE = "━━"
 LOG_COMMAND = ("/usr/bin/log", "show", "--style", "compact")
 LOG_PREDICATE = 'sender == "Sandbox"'  # every line, to tell an empty log apart
 LOG_TIMEOUT_S = 60
-LOG_DELAY_S = 1.0  # the log takes a moment to hold the last refusals
+LOG_DELAY_S = 1.0  # a late connection reaches the catcher
+# The system log takes seconds to hold the last lines: every window is read
+# after the last run, this long after it (measured: read one second after
+# each run, a refusal and a window's every line were still missing).
+LOG_SETTLE_S = 5.0
 LOG_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 # One refusal: "Sandbox: node(4242) deny(1) network-outbound <what>".
 DENY_RE = re.compile(r"Sandbox: [^(]+\((\d+)\) deny\(\d+\) network-outbound (\S+)")
 CLOCK_FORMAT = "%H:%M:%S"
+DUPLICATE_RE = re.compile(r"(\d+) duplicate reports? for Sandbox:")
+LOG_STAMP_RE = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+)")
+LOG_MARGIN = timedelta(seconds=1)  # log show takes whole seconds
 PROBE_KEY = "probe-key"  # the stand-in model takes any key
 SWITCH_RUNS = ("1-", "2-", "3-")  # the runs read for outside connections
 INCOMPLETE = "run did not complete: 0 means unobserved"
@@ -110,8 +119,9 @@ class Refusals:
     Attributes:
         own: Outbound attempts (DNS lookups or connects) it refused the
             harness's own process.
-        total: The same, refused any sandboxed process in the window (the
-            box's commands, and anything else sandboxed on the machine).
+        total: The run's refusals of any process: the harness's own, and any
+            other sandboxed process's inside the run's window (the box's
+            commands, and anything else sandboxed on the machine).
         targets: What each refused attempt was for, such as
             ``/private/var/run/mDNSResponder`` (a DNS lookup) or
             ``remote:*:443``, with how often.
@@ -180,6 +190,9 @@ class Probe:
         answered: What ``answer.txt`` holds after the run, or None.
         refused: The sandbox's refusals in the run's window, from the
             system log (None when the log could not be read).
+        pid: Qwen Code's own process.
+        since: When the run started.
+        until: When the run, and every process it started, had ended.
     """
 
     name: str
@@ -189,6 +202,9 @@ class Probe:
     log: Path = Path()
     answered: str | None = None
     refused: Refusals | None = None
+    pid: int = 0
+    since: datetime = datetime.min
+    until: datetime = datetime.min
 
 
 def reply_for(index: int) -> dict[str, Any]:
@@ -369,9 +385,11 @@ def run_once(
         raise HarnessInstallError(f"no sandbox, so no run: {error}") from error
     log = folders.task.parent / f"{name}.jsonl"
     exit_code: int | None
-    since = datetime.now() - timedelta(seconds=1)
+    since = datetime.now()
     with log.open("w", encoding="utf-8") as out:
-        # sandbox-exec becomes Qwen Code, so this pid is its own process.
+        # sandbox-exec becomes Qwen Code, so this pid is its own process; its
+        # own session, so every process it leaves behind is stopped with it
+        # (a leftover one would ask for the network in the next run's window).
         process = subprocess.Popen(
             argv,
             cwd=folders.task,
@@ -379,14 +397,17 @@ def run_once(
             stdin=subprocess.DEVNULL,
             stdout=out,
             stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
         try:
             exit_code = process.wait(timeout=RUN_TIMEOUT_S)
         except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
             exit_code = None
-    time.sleep(LOG_DELAY_S)  # late connections reach the catcher and the log
+        finally:
+            time.sleep(LOG_DELAY_S)  # a late connection reaches the catcher
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
     answer = folders.task / "answer.txt"
     return Probe(
         name=name,
@@ -395,30 +416,26 @@ def run_once(
         exit_code=exit_code,
         log=log,
         answered=answer.read_text().strip() if answer.is_file() else None,
-        refused=sandbox_refusals(process.pid, since, datetime.now()),
+        pid=process.pid,
+        since=since,
+        until=datetime.now(),
     )
 
 
-def sandbox_refusals(pid: int, since: datetime, until: datetime) -> Refusals | None:
-    """Read the sandbox's refusals in one run's window from the system log.
-
-    A client that ignores ``HTTPS_PROXY`` never reaches the catcher; the
-    sandbox refuses its DNS lookup or connect, and says so in the log. Every
-    refusal in the window is counted, not only the harness's own process:
-    a command it starts (bash, curl) has a pid of its own.
+def read_sandbox_log(since: datetime, until: datetime) -> str | None:
+    """Read every Sandbox line the system log holds for a span of time.
 
     Args:
-        pid: The harness's own process.
-        since: When the run started.
-        until: When it ended (and the log had a moment to catch up).
+        since: The span's start.
+        until: Its end.
 
     Returns:
-        The refusals, or None when the log could not be read.
+        The lines, or None when the log could not be read.
     """
     command = [
         *LOG_COMMAND,
-        "--start", since.strftime(LOG_TIME_FORMAT),
-        "--end", until.strftime(LOG_TIME_FORMAT),
+        "--start", (since - LOG_MARGIN).strftime(LOG_TIME_FORMAT),
+        "--end", (until + LOG_MARGIN).strftime(LOG_TIME_FORMAT),
         "--predicate", LOG_PREDICATE,
     ]  # fmt: skip
     try:
@@ -427,20 +444,57 @@ def sandbox_refusals(pid: int, since: datetime, until: datetime) -> Refusals | N
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
-    if found.returncode != 0:
+    return found.stdout if found.returncode == 0 else None
+
+
+def sandbox_refusals(
+    text: str | None,
+    pid: int,
+    since: datetime,
+    until: datetime,
+    harness_pids: frozenset[int] = frozenset(),
+) -> Refusals | None:
+    """Count the sandbox's refusals that belong to one run.
+
+    A client that ignores ``HTTPS_PROXY`` never reaches the catcher; the
+    sandbox refuses its DNS lookup or connect, and says so in the log. A
+    refusal belongs to this run when it names this run's Qwen Code process,
+    whenever it was logged (the log folds repeats into a "1 duplicate report
+    for ..." line seconds later), or when another process made it inside
+    this run's window: a command Qwen Code starts has a pid of its own.
+    Refusals that name another run's Qwen Code process are that run's.
+
+    Args:
+        text: ``read_sandbox_log``'s lines (None: the log was unreadable).
+        pid: This run's Qwen Code process.
+        since: When the run started.
+        until: When it, and every process it started, had ended.
+        harness_pids: Every run's Qwen Code process.
+
+    Returns:
+        The refusals, or None when the log could not be read.
+    """
+    if text is None:
         return None
-    denials = DENY_RE.findall(found.stdout)
+    own = total = lines = 0
     targets: dict[str, int] = {}
-    for _, target in denials:
-        targets[target] = targets.get(target, 0) + 1
-    return Refusals(
-        own=sum(found_pid == str(pid) for found_pid, _ in denials),
-        total=len(denials),
-        targets=targets,
-        lines=sum("Sandbox:" in line for line in found.stdout.splitlines()),
-        start=since,
-        end=until,
-    )
+    for line in text.splitlines():
+        stamp = LOG_STAMP_RE.match(line)
+        inside = bool(stamp) and since <= datetime.fromisoformat(stamp.group(1)) < until
+        lines += inside and "Sandbox:" in line
+        denial = DENY_RE.search(line)
+        if denial is None:
+            continue
+        found_pid = int(denial.group(1))
+        repeated = DUPLICATE_RE.search(line)
+        count = int(repeated.group(1)) if repeated else 1
+        if found_pid == pid:
+            own += count
+        elif not inside or found_pid in harness_pids:
+            continue  # another run's, or outside this window
+        total += count
+        targets[denial.group(2)] = targets.get(denial.group(2), 0) + count
+    return Refusals(own, total, targets, lines, since, until)
 
 
 def fresh_folders(root: Path, name: str) -> RunFolders:
@@ -574,8 +628,8 @@ def sandbox_line(probe: Probe) -> str:
     what = ", ".join(f"{target} ×{n}" for target, n in sorted(refused.targets.items()))
     return (
         f"  sandbox        refused attempts (DNS or connect): {refused.own} by the "
-        f"harness process, {refused.total} by any sandboxed process in the window "
-        f"(its own log): {what}"
+        f"harness process, {refused.total} in all (with any other sandboxed process "
+        f"in the run's window; its own log): {what}"
     )
 
 
@@ -677,7 +731,7 @@ def main() -> None:
             Run("5-not-bare", "without --bare", bare=False),
             Run("6-read-file-excluded", "read_file excluded too", extra="read_file"),
         ]
-        probes = {}
+        probes: list[tuple[Run, Probe]] = []
         for run in runs:
             run_folders = fresh_folders(root, run.name)
             # wire.py's wiring for this run's folders, then the run's one change.
@@ -693,13 +747,20 @@ def main() -> None:
                 probe = run_once(run.name, wiring, run_folders, stand_in, catcher)
             finally:
                 shutil.rmtree(run_folders.state, ignore_errors=True)
-            probes[run.name] = probe
-            print("")
-            print(f"{RULE} {run.name[0]}. {run.title}")
-            print(f"  exit           {probe.exit_code}")
-            for line in run.reader(probe):
-                print(line)
-            print(sandbox_line(probe))
+            probes.append((run, probe))
+    time.sleep(LOG_SETTLE_S)  # then every window is read from a settled log
+    text = read_sandbox_log(probes[0][1].since, probes[-1][1].until)
+    pids = frozenset(probe.pid for _, probe in probes)
+    for run, probe in probes:
+        probe.refused = sandbox_refusals(
+            text, probe.pid, probe.since, probe.until, pids
+        )
+        print("")
+        print(f"{RULE} {run.name[0]}. {run.title}")
+        print(f"  exit           {probe.exit_code}")
+        for line in run.reader(probe):
+            print(line)
+        print(sandbox_line(probe))
     print("")
     print(f"logs      {tilde(str(root))}/<run>/<run>.jsonl (Qwen Code's stream-json)")
 

@@ -780,8 +780,8 @@ def test_a_zero_says_what_it_could_and_could_not_see() -> None:
     loud = qwen_probe.Probe(name="l", refused=refusals(1, 3, 9, mdns=2, web=1))
     assert qwen_probe.sandbox_line(loud) == (
         "  sandbox        refused attempts (DNS or connect): 1 by the harness "
-        "process, 3 by any sandboxed process in the window (its own log): "
-        "mdns ×2, web ×1"
+        "process, 3 in all (with any other sandboxed process in the run's window; "
+        "its own log): mdns ×2, web ×1"
     )
     for broken in (
         qwen_probe.Probe(name="b", requests=[body], exit_code=1),
@@ -794,32 +794,47 @@ def test_a_zero_says_what_it_could_and_could_not_see() -> None:
     )
 
 
-def test_every_refusal_in_the_window_is_counted_not_only_the_harness(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_every_refusal_of_the_run_is_counted_not_only_the_harness() -> None:
     text = (
-        "2026-10-14 01:36:01.0 E  kernel[0:1] Sandbox: node(4242) deny(1) "
+        "2026-10-14 01:36:01.000 E  kernel[0:1] Sandbox: node(4242) deny(1) "
         "network-outbound /private/var/run/mDNSResponder\n"
-        "2026-10-14 01:36:02.0 E  kernel[0:1] Sandbox: curl(99) deny(1) "
-        "network-outbound /private/var/run/mDNSResponder\n"
-        "2026-10-14 01:36:03.0 E  kernel[0:1] Sandbox: curl(99) deny(1) "
+        "2026-10-14 01:36:02.000 E  kernel[0:1] Sandbox: curl(99) deny(1) "
         "network-outbound remote:*:80\n"
-        "2026-10-14 01:36:04.0 E  kernel[0:1] Sandbox: node(4242) deny(1) "
+        "2026-10-14 01:36:03.000 E  kernel[0:1] Sandbox: node(4242) deny(1) "
         "file-read-data /x\n"
+        # The log folds a repeat into a later line, past the run's window.
+        "2026-10-14 01:37:30.000 E  kernel[0:1] 2 duplicate reports for Sandbox: "
+        "node(4242) deny(1) network-outbound /private/var/run/mDNSResponder\n"
+        # Another run's harness, inside this window: that run's, not this one's.
+        "2026-10-14 01:36:04.000 E  kernel[0:1] Sandbox: node(7) deny(1) "
+        "network-outbound /private/var/run/mDNSResponder\n"
     )
-    answer = subprocess.CompletedProcess([], 0, stdout=text, stderr="")
-    monkeypatch.setattr(qwen_probe.subprocess, "run", lambda *a, **k: answer)
     start, end = datetime(2026, 10, 14, 1, 36), datetime(2026, 10, 14, 1, 37)
-    found = qwen_probe.sandbox_refusals(4242, start, end)
+    found = qwen_probe.sandbox_refusals(text, 4242, start, end, frozenset({4242, 7}))
     assert found is not None
-    assert (found.own, found.total, found.lines) == (1, 3, 4)
-    assert found.targets == {"/private/var/run/mDNSResponder": 2, "remote:*:80": 1}
+    assert (found.own, found.total, found.lines) == (3, 4, 4)
+    assert found.targets == {"/private/var/run/mDNSResponder": 3, "remote:*:80": 1}
     # A pid with no line is 0 of its own, never a clean window.
-    other = qwen_probe.sandbox_refusals(1, start, end)
-    assert other is not None and (other.own, other.total) == (0, 3)
+    other = qwen_probe.sandbox_refusals(text, 1, start, end, frozenset({1, 7, 4242}))
+    assert other is not None and (other.own, other.total) == (0, 1)
+    assert qwen_probe.sandbox_refusals(None, 4242, start, end) is None
+
+
+def test_the_log_is_read_or_said_unreadable(monkeypatch: pytest.MonkeyPatch) -> None:
+    start, end = datetime(2026, 10, 14, 1, 36), datetime(2026, 10, 14, 1, 37)
+    seen: list[list[str]] = []
+
+    def fake(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        seen.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="lines", stderr="")
+
+    monkeypatch.setattr(qwen_probe.subprocess, "run", fake)
+    assert qwen_probe.read_sandbox_log(start, end) == "lines"
+    assert seen[0][:2] == ["/usr/bin/log", "show"]
+    assert "2026-10-14 01:35:59" in seen[0] and "2026-10-14 01:37:01" in seen[0]
     failed = subprocess.CompletedProcess([], 1, stdout="", stderr="no")
     monkeypatch.setattr(qwen_probe.subprocess, "run", lambda *a, **k: failed)
-    assert qwen_probe.sandbox_refusals(4242, start, end) is None
+    assert qwen_probe.read_sandbox_log(start, end) is None
 
 
 # ------------------------------------------------- power.py
