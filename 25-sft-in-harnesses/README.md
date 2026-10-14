@@ -256,7 +256,7 @@ The mask is 1 exactly on the teacher's tokens: each reply, from its reason
 to its end-of-turn token `<|im_end|>`. Everything else is 0: Claude Code's
 2,310-token system prompt with the tool list and the task, each tool
 result, and the generation prompt `<|im_start|>assistant\n<think>` that
-opens every reply. Only 5.8% trained of this row is
+opens every reply. Only 5.8% of this row is
 trained. The tests check the same on two rows captured through
 mini-swe-agent: decoded, the mask-1 segments are the teacher's replies,
 word for word, each followed by `<|im_end|>`.
